@@ -1,0 +1,16 @@
+{% comment %}
+  Session attendance checkboxes, sourced from the EVENT page's `session` items
+  (field per original array index: session-<n>).
+{% endcomment %}
+{% if block.sessions.size > 0 %}
+<div class="block">
+  {% if block.title != blank %}<div class="block-title">{{ block.title | escape }}</div>{% endif %}
+  {% if block.bodyHtml != blank %}<div class="body">{{ block.bodyHtml }}</div>{% endif %}
+  {% for session in block.sessions %}
+  <div class="choice">
+    <input type="checkbox" id="{{ session.field }}" name="{{ session.field }}" value="yes">
+    <label for="{{ session.field }}">{{ session.name | escape }}{% if session.start != blank %} — {{ session.start | escape }}{% endif %}{% if session.location != blank %} · {{ session.location | escape }}{% endif %}</label>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

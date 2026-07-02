@@ -1,0 +1,468 @@
+// ============================================================
+// Public RSVP form — the whole site.
+//
+// Reads ONLY published content: the event / mail_list / guest / edm pages come
+// from the CMS's published D1 (`live_pages`, see src/published.ts) — unpublished
+// content is simply not visible here. The form itself is built from the EDM's
+// `rsvp-*` content blocks (meal preferences, plus-one, travel/hotel, pickup,
+// custom inputs, …), localized per the legacy Eventuai multilingual routes
+// (`/:language/rsvp/...`, mis/en/zh-hant/zh-hans).
+//
+// Links are minted and HMAC-signed by cms-plugin-events (its PUBLIC_BASE_URL
+// points at this Worker); EVENTS_PLUGIN_SECRET here is a copy of that plugin's
+// secret, used to verify them. The EDM that defines the form is picked from the
+// link's `?edm=` parameter or, failing that, the guest list's `edm` pointer.
+// Without a valid EDM the plain status/plus-guests fallback form renders
+// instead, so pre-EDM links keep working.
+//
+// INTERIM response storage: submits update the draft guest page through the F1
+// API (status, plus_guests, response log), authenticated as the events plugin.
+// How RSVP responses should really be stored (full answers, self-registration,
+// confirmation email) is an open decision — see cms-to-rsvp.md §9.2 B.1.
+// ============================================================
+
+import { CmsClient, attr, blocks, items, localized, pointer, type CmsPage } from '@lionrockjs/worker-cms-plugin';
+import { signPayload, verifyPayload } from './crypto';
+import { getPublishedPage, getPublishedPages, type PublishedEnv } from './published';
+import { qrSvg } from './qr';
+import { renderLiquid } from './templates/liquid';
+import { applyTemplateTokens, guestTokens, safeHtml } from './tokens';
+
+export interface RsvpEnv extends PublishedEnv {
+  /** Copy of cms-plugin-events' PLUGIN_SECRET — verifies its signed links and authenticates the interim F1 write. */
+  EVENTS_PLUGIN_SECRET?: string;
+  /** Base URL of the CMS Worker, for the interim submit write-back only. */
+  CMS_URL?: string;
+  /** Public origin serving /checkin/… QR links (cms-plugin-checkin). */
+  CHECKIN_BASE_URL?: string;
+  VIEWS: Fetcher;
+}
+
+/** Plugin id the interim F1 write authenticates as (the secret is that plugin's). */
+const EVENTS_PLUGIN_ID = 'events';
+
+export const RSVP_LANGUAGES = ['mis', 'en', 'zh-hant', 'zh-hans'];
+
+const RESPONSES = new Set(['confirmed', 'declined']);
+const DEFAULT_LANGUAGE = 'en';
+
+export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Promise<Response | null> {
+  const path = url.pathname.split('/').filter(Boolean);
+  const urlLanguage = RSVP_LANGUAGES.includes(path[0]) ? path[0] : '';
+  if (urlLanguage) path.shift();
+  if (path[0] !== 'rsvp') return null;
+  if (path[1] === 'thank-you') return thankYou(env.VIEWS, url.searchParams.get('status') ?? 'confirmed');
+
+  const eventId = pageId(path[1]);
+  const listId = pageId(path[2]);
+  const guestId = pageId(path[3]);
+  const signature = path[4] ?? '';
+  if (!eventId || !listId || !guestId || !signature || !env.EVENTS_PLUGIN_SECRET) return new Response('not found', { status: 404 });
+  const payload = `rsvp:${eventId}:${listId}:${guestId}`;
+  if (!(await verifyPayload(env.EVENTS_PLUGIN_SECRET, payload, signature))) return new Response('not found', { status: 404 });
+
+  // Published data only — no draft/F1 reads on the public GET path.
+  if (!env.PUBLISHED_DB) return new Response('server misconfigured', { status: 500 });
+  const pages = await getPublishedPages(env.PUBLISHED_DB, [eventId, listId, guestId]);
+  const event = pages.get(eventId);
+  const list = pages.get(listId);
+  const guest = pages.get(guestId);
+  if (!event || !list || !guest || !validContext(event, list, guest, eventId, listId)) {
+    return new Response('not found', { status: 404 });
+  }
+
+  const preferred = attr(guest.lect, 'prefer_language').toLowerCase();
+  const language = urlLanguage || (RSVP_LANGUAGES.includes(preferred) ? preferred : '') || DEFAULT_LANGUAGE;
+  const languagePrefix = urlLanguage ? `/${urlLanguage}` : '';
+
+  if (request.method === 'POST') return submitRsvp(request, env, url, guest, languagePrefix);
+
+  // Already responded → straight to thank-you, unless the list allows refills.
+  const responses = realResponses(guest);
+  if (responses.length && !allowRefill(guest)) {
+    const latest = String(responses[responses.length - 1].status ?? 'confirmed');
+    return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status: latest });
+  }
+
+  const edm = await resolveEdm(env.PUBLISHED_DB, url, list, eventId);
+  return rsvpForm(env, url, { event, list, guest, edm, eventId, listId, language });
+}
+
+// ── EDM resolution ─────────────────────────────────────────────────────────────
+
+/**
+ * The EDM whose `rsvp-*` blocks define this form: the link's `?edm=` (every
+ * emailed RSVP link carries the sending EDM) or the list's assigned `edm`
+ * pointer. Either way it must be a published `edm` page of this event.
+ */
+async function resolveEdm(db: D1Database, url: URL, list: CmsPage, eventId: number): Promise<CmsPage | null> {
+  for (const candidate of [pageId(url.searchParams.get('edm')), pageId(pointer(list.lect, 'edm'))]) {
+    if (!candidate) continue;
+    const edm = await getPublishedPage(db, candidate);
+    if (edm && edm.page_type === 'edm' && pointer(edm.lect, 'event') === String(eventId)) return edm;
+  }
+  return null;
+}
+
+// ── Form rendering ─────────────────────────────────────────────────────────────
+
+interface FormContext {
+  event: CmsPage;
+  list: CmsPage;
+  guest: CmsPage;
+  edm: CmsPage | null;
+  eventId: number;
+  listId: number;
+  language: string;
+}
+
+async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<Response> {
+  const { event, list, guest, edm, listId, language } = context;
+
+  // Personalization tokens ({{name}}, {{salutation}}, …), legacy ControllerRSVP.parse.
+  const tokens = guestTokens(guest);
+  const personalize = (value: string): string => (value ? applyTemplateTokens(value, tokens) : value);
+
+  const action = url.pathname + (url.searchParams.get('edm') ? `?edm=${encodeURIComponent(url.searchParams.get('edm')!)}` : '');
+  const edmLect = edm?.lect ?? {};
+  const formBlocks = edm ? await formBlockVMs(env, edm, event, guest, listId, language, personalize) : [];
+  const meals = formBlocks.filter((block) => block.type === 'rsvp-meal-preferences');
+
+  const html = await renderLiquid(env.VIEWS, '/templates/public-rsvp.liquid', {
+    language,
+    action,
+    hasEdm: !!edm,
+    eventName: localized(event.lect, 'name', language) || event.name,
+    listName: list.name,
+    guestName: personalize('{{prefer_name||name}}') || guest.name,
+    status: attr(guest.lect, 'status'),
+    plusGuests: attr(guest.lect, 'plus_guests') || '0',
+    subject: personalize(localized(edmLect, 'subject', language)),
+    heading: personalize(localized(edmLect, 'heading', language)),
+    bodyHtml: personalize(safeHtml(localized(edmLect, 'body', language))),
+    acceptLabel: localized(edmLect, 'rsvp_form_button', language)
+      || localized(edmLect, 'rsvp_button', language)
+      || 'Accept',
+    blocks: formBlocks,
+    meals,
+    hasMeals: meals.length > 0,
+    languages: RSVP_LANGUAGES
+      .filter((code) => code !== 'mis')
+      .map((code) => ({
+        code,
+        label: code === 'zh-hant' ? '繁體中文' : code === 'zh-hans' ? '简体中文' : 'English',
+        href: `/${code}${stripLanguagePrefix(url.pathname)}${url.search}`,
+        active: code === language,
+      })),
+  });
+  return htmlResponse(html);
+}
+
+function stripLanguagePrefix(pathname: string): string {
+  const segments = pathname.split('/').filter(Boolean);
+  if (RSVP_LANGUAGES.includes(segments[0])) segments.shift();
+  return `/${segments.join('/')}`;
+}
+
+/**
+ * Projects the EDM's content blocks into the flat shapes the form template
+ * renders. Rich-text fields are sanitised through safeHtml; everything else is
+ * escaped in the templates.
+ */
+async function formBlockVMs(
+  env: RsvpEnv,
+  edm: CmsPage,
+  event: CmsPage,
+  guest: CmsPage,
+  listId: number,
+  language: string,
+  personalize: (value: string) => string,
+): Promise<Array<Record<string, unknown>>> {
+  const vms: Array<Record<string, unknown>> = [];
+  for (const [index, block] of blocks(edm.lect).entries()) {
+    const type = attr(block, '_type');
+    const key = attr(block, '_id') || String(index);
+    const title = personalize(localized(block, 'title', language));
+    const bodyHtml = personalize(safeHtml(localized(block, 'body', language)));
+
+    switch (type) {
+      case 'paragraph':
+        vms.push({ type, subject: personalize(localized(block, 'subject', language)), bodyHtml });
+        break;
+      case 'table':
+        vms.push({
+          type,
+          titleHtml: safeHtml(localized(block, 'title', language)),
+          rows: items(block, 'row').map((row) => ({
+            nameHtml: safeHtml(localized(row, 'name', language)),
+            descriptionHtml: safeHtml(localized(row, 'description', language)),
+          })),
+        });
+        break;
+      case 'button':
+        vms.push({
+          type,
+          label: localized(block, 'label', language) || attr(block, 'label'),
+          url: localized(block, 'url', language) || attr(block, 'url'),
+        });
+        break;
+      case 'spacer':
+        vms.push({ type, lines: Math.max(1, Number.parseInt(attr(block, 'lines'), 10) || 1) });
+        break;
+      case 'rsvp-location':
+        vms.push({
+          type,
+          name: localized(block, 'name', language),
+          lines: ['address_1', 'address_2', 'address_3']
+            .map((field) => localized(block, field, language))
+            .concat([[localized(block, 'city', language), localized(block, 'state', language), localized(block, 'country', language)]
+              .filter(Boolean).join(', ')])
+            .filter(Boolean),
+        });
+        break;
+      case 'rsvp-date-time':
+        vms.push({
+          type,
+          dateText: localized(block, 'date_text', language),
+          time: localized(block, 'time', language),
+          timezone: attr(block, 'timezone'),
+        });
+        break;
+      case 'rsvp-meal-preferences':
+        vms.push({
+          type,
+          key: `meal-${key}`,
+          title,
+          bodyHtml,
+          allowMessage: truthy(attr(block, 'allow_message')),
+          messagePlaceholder: localized(block, 'message_placeholder', language)
+            || 'Please let us know if you have any special dietary requirements.',
+          food: items(block, 'food').map((row) => ({
+            name: localized(row, 'name', language),
+            description: localized(row, 'description', language),
+          })).filter((row) => row.name),
+        });
+        break;
+      case 'rsvp-plus-one': {
+        const maxGuests = Math.max(0, Number.parseInt(attr(block, 'max_guests'), 10) || 0);
+        vms.push({ type, title, bodyHtml, maxGuests, hasGuests: maxGuests > 0 });
+        break;
+      }
+      case 'rsvp-custom':
+        vms.push({ type, title, bodyHtml, inputs: customInputVMs(block, 'custom_input', 'rsvp-custom-', language) });
+        break;
+      case 'rsvp-travel-hotel':
+        vms.push({
+          type,
+          title,
+          bodyHtml,
+          flightInputs: customInputVMs(block, 'flight_custom_input', 'rsvp-travel-hotel-flight-', language),
+          hotelInputs: customInputVMs(block, 'hotel_custom_input', 'rsvp-travel-hotel-', language),
+        });
+        break;
+      case 'rsvp-pickup':
+        vms.push({
+          type,
+          title: title || 'Pickup Service',
+          pickupDateLabel: localized(block, 'pickup_date_label', language) || 'Pickup Date',
+          pickupTimeLabel: localized(block, 'pickup_time_label', language) || 'Pickup Time',
+          pickupLocationLabel: localized(block, 'pickup_location_label', language) || 'Pickup Location',
+          dropoffDateLabel: localized(block, 'dropoff_date_label', language) || 'Drop-off Date',
+          dropoffTimeLabel: localized(block, 'dropoff_time_label', language) || 'Drop-off Time',
+          dropoffLocationLabel: localized(block, 'dropoff_location_label', language) || 'Drop-off Location',
+          accommodationTitle: localized(block, 'accommodation_title', language),
+          checkinDateLabel: localized(block, 'checkin_date_label', language) || 'Check-in Date',
+          checkoutDateLabel: localized(block, 'checkout_date_label', language) || 'Check-out Date',
+        });
+        break;
+      case 'rsvp-sessions':
+        vms.push({
+          type,
+          title,
+          bodyHtml,
+          sessions: items(event.lect, 'session').map((session, sessionIndex) => ({
+            name: localized(session, 'name', language) || `Session ${sessionIndex + 1}`,
+            start: attr(session, 'start'),
+            location: localized(session, 'location', language),
+            field: `session-${sessionIndex}`,
+          })).filter((session) => session.name),
+        });
+        break;
+      case 'rsvp-qrcode': {
+        // Same signed check-in payload the events plugin's admin guest-QR view
+        // mints, resolved by cms-plugin-checkin's /checkin/… routes.
+        const token = `${listId}.${guest.id}`;
+        const sig = env.EVENTS_PLUGIN_SECRET ? await signPayload(env.EVENTS_PLUGIN_SECRET, token) : '';
+        const base = (env.CHECKIN_BASE_URL ?? '').replace(/\/+$/, '');
+        const qrPayload = base && sig ? `${base}/checkin/${listId}/${guest.id}/${sig}` : `${token}.${sig}`;
+        const size = Math.max(120, Number.parseInt(attr(block, 'size'), 10) || 200);
+        vms.push({
+          type,
+          title: localized(block, 'title', language),
+          message: localized(block, 'message', language),
+          size,
+          qrSvg: qrSvg(qrPayload, { size }),
+        });
+        break;
+      }
+      // rsvp-accept / rsvp-button render as the form's submit buttons;
+      // rsvp-public-form is the self-registration landing block (not ported —
+      // response storage is still an open decision). Everything else (pictures,
+      // logos, unsubscribe, …) is email-only.
+      default:
+        break;
+    }
+  }
+  return vms;
+}
+
+interface CustomInputVM {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+  description: string;
+  defaultValue: string;
+  options: Array<{ value: string; label: string }>;
+}
+
+/** Legacy field-name scheme: `<prefix><label-slug>` (lowercased, spaces → dashes). */
+function customInputVMs(
+  block: Record<string, unknown>,
+  itemsKey: string,
+  prefix: string,
+  language: string,
+): CustomInputVM[] {
+  return items(block, itemsKey)
+    .map((input) => {
+      const label = localized(input, 'label', language);
+      const type = attr(input, 'type') || 'text';
+      const defaultValue = attr(input, 'default_value') || localized(input, 'default_value', language);
+      return {
+        name: `${prefix}${slug(label)}`,
+        label,
+        type,
+        required: truthy(attr(input, 'required')),
+        description: localized(input, 'description', language),
+        defaultValue,
+        options: type === 'select' || type === 'radio' ? parseOptions(defaultValue) : [],
+      };
+    })
+    .filter((input) => input.label);
+}
+
+/** `value:label|value:label` → options (legacy select/radio encoding). */
+function parseOptions(encoded: string): Array<{ value: string; label: string }> {
+  return encoded
+    .split('|')
+    .map((part) => {
+      const [value, label] = part.split(':');
+      return { value: (value ?? '').trim(), label: (label ?? value ?? '').trim() };
+    })
+    .filter((option) => option.value !== '' || option.label !== '');
+}
+
+function slug(label: string): string {
+  return label.toLowerCase().replace(/[/()]/g, '').replace(/\s+/g, '-');
+}
+
+// ── Submit (INTERIM storage — see header note) ─────────────────────────────────
+
+async function submitRsvp(
+  request: Request,
+  env: RsvpEnv,
+  url: URL,
+  guest: CmsPage,
+  languagePrefix: string,
+): Promise<Response> {
+  const form = await request.formData();
+  const status = String(form.get('status') ?? '').trim().toLowerCase();
+  if (!RESPONSES.has(status)) return new Response('Choose a response', { status: 400 });
+
+  if (realResponses(guest).length && !allowRefill(guest)) {
+    return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status });
+  }
+
+  // Plus guests: the explicit count field (fallback form), else the number of
+  // named companions the EDM's plus-one block collected.
+  const namedPlusGuests = [...form.entries()]
+    .filter(([name, value]) => /^rsvp-plus-one-\d+:name$/.test(name) && String(value).trim() !== '')
+    .length;
+  const plusGuestValue = form.get('plus_guests') ?? (namedPlusGuests || attr(guest.lect, 'plus_guests')) ?? '0';
+  const plusGuests = Math.max(0, Number(plusGuestValue));
+  const message = String(form.get('message') ?? '').trim();
+
+  // INTERIM: update the draft guest via F1, authenticated as the events plugin
+  // (status + count + response log only). Full answer storage (meals, travel,
+  // custom fields, …) is the open decision in cms-to-rsvp.md §9.2 B.1 — the
+  // field values are collected but not yet kept.
+  const cms = new CmsClient({
+    cmsUrl: env.CMS_URL,
+    pluginSecret: env.EVENTS_PLUGIN_SECRET,
+    pluginId: EVENTS_PLUGIN_ID,
+    fetcher: (input, init) => globalThis.fetch(input, init),
+  });
+  await cms.update(guest.id, {
+    lect: {
+      status,
+      plus_guests: String(Number.isFinite(plusGuests) ? plusGuests : 0),
+      response: [...items(guest.lect, 'response'), {
+        status,
+        date: new Date().toISOString(),
+        message,
+      }],
+    },
+  });
+  return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status });
+}
+
+// ── Thank-you ──────────────────────────────────────────────────────────────────
+
+async function thankYou(views: Fetcher, status: string): Promise<Response> {
+  const html = await renderLiquid(views, '/templates/public-thank-you.liquid', { declined: status === 'declined' });
+  return htmlResponse(html);
+}
+
+// ── Shared helpers ─────────────────────────────────────────────────────────────
+
+function validContext(event: CmsPage, list: CmsPage, guest: CmsPage, eventId: number, listId: number): boolean {
+  return event.page_type === 'event'
+    // The list belongs to the event via its `event` pointer (not parent page).
+    && list.page_type === 'mail_list' && pointer(list.lect, 'event') === String(eventId)
+    && guest.page_type === 'guest' && guest.page_id === listId;
+}
+
+/**
+ * Real submitted responses. The host seeds every blueprint block (including
+ * `response`) with one empty row on create, so rows only count once they carry
+ * a status or date.
+ */
+function realResponses(guest: CmsPage): Array<Record<string, unknown>> {
+  return items(guest.lect, 'response').filter(
+    (entry) => String(entry.status ?? '').trim() !== '' || String(entry.date ?? '').trim() !== '',
+  );
+}
+
+function allowRefill(guest: CmsPage): boolean {
+  return truthy(attr(guest.lect, 'allow_refill'));
+}
+
+function truthy(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'yes' || normalized === 'true';
+}
+
+function htmlResponse(html: string): Response {
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+}
+
+function redirect(url: URL, path: string, params: Record<string, string> = {}): Response {
+  const target = new URL(path, url.origin);
+  for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value);
+  return new Response(null, { status: 303, headers: { Location: target.toString() } });
+}
+
+function pageId(value: unknown): number | null {
+  const id = typeof value === 'number' ? value : Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}

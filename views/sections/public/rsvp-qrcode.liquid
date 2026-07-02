@@ -1,0 +1,5 @@
+<div class="block qr">
+  {% if block.title != blank %}<div class="block-sub">{{ block.title | escape }}</div>{% endif %}
+  {% if block.message != blank %}<p class="muted">{{ block.message | escape }}</p>{% endif %}
+  {{ block.qrSvg }}
+</div>

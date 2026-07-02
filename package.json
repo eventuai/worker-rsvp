@@ -1,0 +1,24 @@
+{
+  "name": "worker-rsvp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Public RSVP website backed by 0xCMS — renders EDM-driven RSVP forms from the published database.",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@lionrockjs/worker-cms-plugin": "0.1.1",
+    "liquidjs": "^10.27.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260628.1",
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9",
+    "wrangler": "^4.105.0"
+  }
+}

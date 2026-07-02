@@ -1,0 +1,6 @@
+{% if block.dateText != blank or block.time != blank %}
+<div class="block">
+  {% if block.dateText != blank %}<div class="block-sub">{{ block.dateText | escape }}</div>{% endif %}
+  {% if block.time != blank %}<div>{{ block.time | escape }}{% if block.timezone != blank %} ({{ block.timezone | escape }}){% endif %}</div>{% endif %}
+</div>
+{% endif %}

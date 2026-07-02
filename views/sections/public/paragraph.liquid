@@ -1,0 +1,4 @@
+<div class="block">
+  {% if block.subject != blank %}<div class="block-title">{{ block.subject | escape }}</div>{% endif %}
+  {% if block.bodyHtml != blank %}<div class="body">{{ block.bodyHtml }}</div>{% endif %}
+</div>

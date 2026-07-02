@@ -1,0 +1,6 @@
+{% if block.name != blank or block.lines.size > 0 %}
+<div class="block">
+  {% if block.name != blank %}<div class="block-sub">{{ block.name | escape }}</div>{% endif %}
+  {% for line in block.lines %}<div>{{ line | escape }}</div>{% endfor %}
+</div>
+{% endif %}

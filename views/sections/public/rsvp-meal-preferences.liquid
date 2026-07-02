@@ -1,0 +1,22 @@
+{% comment %}
+  Meal preference radios. `prefix` scopes the field names when rendered per
+  plus guest (e.g. "rsvp-plus-one-2:"); blank for the main attendee.
+  Field names: {prefix}{block.key}-food / {prefix}{block.key}-message.
+{% endcomment %}
+<div class="block">
+  {% if showTitle and block.title != blank %}<div class="block-title">{{ block.title | escape }}</div>{% endif %}
+  {% if showTitle and block.bodyHtml != blank %}<div class="body">{{ block.bodyHtml }}</div>{% endif %}
+  {% for food in block.food %}
+  <div class="choice">
+    <input type="radio"
+           id="{{ prefix | escape }}{{ block.key | escape }}-food-{{ forloop.index0 }}"
+           name="{{ prefix | escape }}{{ block.key | escape }}-food"
+           value="{{ food.name | escape }}">
+    <label for="{{ prefix | escape }}{{ block.key | escape }}-food-{{ forloop.index0 }}">{{ food.name | escape }}</label>
+  </div>
+  {% if food.description != blank %}<div class="choice-note">{{ food.description | escape }}</div>{% endif %}
+  {% endfor %}
+  {% if showTitle and block.allowMessage %}
+  <textarea name="{{ block.key | escape }}-message" rows="2" placeholder="{{ block.messagePlaceholder | escape }}"></textarea>
+  {% endif %}
+</div>

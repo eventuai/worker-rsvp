@@ -1,0 +1,24 @@
+{% comment %}
+  Companion (plus-guest) rows: name + organization per slot, with each meal-
+  preference block repeated per companion under a "rsvp-plus-one-{i}:" field
+  prefix — legacy field-name parity.
+{% endcomment %}
+{% if block.hasGuests %}
+<div class="block">
+  {% if block.title != blank %}<div class="block-title">{{ block.title | escape }}</div>{% endif %}
+  <div class="body">{% if block.bodyHtml != blank %}{{ block.bodyHtml }}{% else %}Will you be joining us with a guest? Please provide their name below.{% endif %}</div>
+  {% for i in (1..block.maxGuests) %}
+    {% capture guestPrefix %}rsvp-plus-one-{{ i }}:{% endcapture %}
+    <div class="plus-guest">
+      <span class="idx">{{ i }}.</span>
+      <input type="text" aria-label="Name" name="{{ guestPrefix }}name" placeholder="Name">
+      <input type="text" aria-label="Organization" name="{{ guestPrefix }}organization" placeholder="Organization">
+    </div>
+    {% for meal in meals %}
+    <div class="nested">
+      {% render 'public/rsvp-meal-preferences', block: meal, prefix: guestPrefix, showTitle: false %}
+    </div>
+    {% endfor %}
+  {% endfor %}
+</div>
+{% endif %}

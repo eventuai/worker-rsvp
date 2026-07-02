@@ -1,0 +1,6 @@
+<div class="block">
+  {% if block.title != blank %}<div class="block-title">{{ block.title | escape }}</div>{% endif %}
+  {% if block.bodyHtml != blank %}<div class="body">{{ block.bodyHtml }}</div>{% endif %}
+  {% render 'public/rsvp-inputs', inputs: block.flightInputs %}
+  {% render 'public/rsvp-inputs', inputs: block.hotelInputs %}
+</div>

@@ -1,0 +1,53 @@
+{% comment %}
+  Shared custom-input list renderer (rsvp-custom / rsvp-travel-hotel). Each
+  input VM carries: name (form field), label, type, required, description,
+  defaultValue, options (select/radio). Ported from the legacy
+  checkbox/select/radio/textarea/input variants.
+{% endcomment %}
+{% for input in inputs %}
+  {% case input.type %}
+    {% when 'checkbox' %}
+    <div class="choice">
+      <input type="checkbox"
+             id="{{ input.name | escape }}"
+             name="{{ input.name | escape }}"
+             value="{{ input.defaultValue | escape }}"
+             {% if input.required %}required{% endif %}>
+      <label for="{{ input.name | escape }}">{{ input.label | escape }}{% if input.required %} *{% endif %}</label>
+    </div>
+    {% when 'select' %}
+    <label for="{{ input.name | escape }}">{{ input.label | escape }}{% if input.required %} *{% endif %}</label>
+    <select id="{{ input.name | escape }}" name="{{ input.name | escape }}" {% if input.required %}required{% endif %}>
+      {% for option in input.options %}
+      <option value="{{ option.value | escape }}">{{ option.label | escape }}</option>
+      {% endfor %}
+    </select>
+    {% when 'radio' %}
+    <label>{{ input.label | escape }}{% if input.required %} *{% endif %}</label>
+    {% for option in input.options %}
+    <div class="choice">
+      <input type="radio"
+             id="{{ input.name | escape }}-{{ forloop.index0 }}"
+             name="{{ input.name | escape }}"
+             value="{{ option.value | escape }}"
+             {% if input.required %}required{% endif %}>
+      <label for="{{ input.name | escape }}-{{ forloop.index0 }}">{{ option.label | escape }}</label>
+    </div>
+    {% endfor %}
+    {% when 'textarea' %}
+    <label for="{{ input.name | escape }}">{{ input.label | escape }}{% if input.required %} *{% endif %}</label>
+    <textarea id="{{ input.name | escape }}"
+              name="{{ input.name | escape }}"
+              rows="3"
+              placeholder="{{ input.description | escape }}"
+              {% if input.required %}required{% endif %}></textarea>
+    {% when 'file' %}
+    {% else %}
+    <label for="{{ input.name | escape }}">{{ input.label | escape }}{% if input.required %} *{% endif %}</label>
+    <input type="{{ input.type | default: 'text' | escape }}"
+           id="{{ input.name | escape }}"
+           name="{{ input.name | escape }}"
+           placeholder="{{ input.description | escape }}"
+           {% if input.required %}required{% endif %}>
+  {% endcase %}
+{% endfor %}

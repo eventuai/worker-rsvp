@@ -1,0 +1,11 @@
+<div class="block">
+  {% if block.titleHtml != blank %}<div class="block-title">{{ block.titleHtml }}</div>{% endif %}
+  <table class="info">
+    {% for row in block.rows %}
+    <tr>
+      <td><b>{{ row.nameHtml }}</b></td>
+      <td>{{ row.descriptionHtml }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
