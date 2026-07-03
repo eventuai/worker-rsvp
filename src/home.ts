@@ -20,7 +20,7 @@ export async function handleHome(env: HomeEnv, url: URL): Promise<Response | nul
   const prefix = language === 'en' ? '/en' : `/${language}`;
   const eventRows = events.map((event) => {
     const forms = edms
-      .filter((edm) => pointer(edm.lect, 'event') === String(event.id))
+      .filter((edm) => edmBelongsToEvent(edm, event.id))
       .map((edm) => ({
         name: localized(edm.lect, 'subject', language) || edm.name,
         slug: edm.slug,
@@ -56,4 +56,8 @@ export async function handleHome(env: HomeEnv, url: URL): Promise<Response | nul
 
 function hasPublicForm(edm: CmsPage): boolean {
   return blocks(edm.lect).some((block) => String(block._type ?? '') === 'rsvp-public-form');
+}
+
+function edmBelongsToEvent(edm: CmsPage, eventId: number): boolean {
+  return pointer(edm.lect, 'event') === String(eventId) || edm.page_id === eventId;
 }

@@ -175,6 +175,16 @@ function seed(overrides: { guestLect?: Record<string, unknown>; listLect?: Recor
   ];
 }
 
+function pageIdOnlyEdmSeed(): SeedPage[] {
+  const pages = seed();
+  const edm = pages.find((page) => page.id === 30);
+  if (edm) {
+    edm.page_id = 7;
+    edm.lect = { ...(edm.lect ?? {}), _pointers: {} };
+  }
+  return pages;
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -198,6 +208,17 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).toContain('Published events');
     expect(html).toContain('Launch Night');
     expect(html).toContain('event: launch-night');
+    expect(html).toContain('edm: invite');
+    expect(html).toContain('href="/en/rsvp/launch-night/invite/new"');
+  });
+
+  it('lists EDMs attached to events by parent page_id', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request('/'), env(publishedDb(pageIdOnlyEdmSeed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
     expect(html).toContain('edm: invite');
     expect(html).toContain('href="/en/rsvp/launch-night/invite/new"');
   });
@@ -293,6 +314,16 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).toContain('name="meal-1-food"');
     expect(html).not.toContain('Scan at the door');
     expect(html).not.toContain('Decline');
+  });
+
+  it('renders public registration when the EDM is attached by parent page_id', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request('/en/rsvp/launch-night/invite/new'), env(publishedDb(pageIdOnlyEdmSeed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Tell us who you are.');
   });
 
   it('renders the plain fallback form when no valid EDM resolves', async () => {

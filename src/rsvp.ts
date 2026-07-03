@@ -107,7 +107,7 @@ async function resolveEdm(db: D1Database, url: URL, list: CmsPage, eventId: numb
   for (const candidate of [pageId(url.searchParams.get('edm')), pageId(pointer(list.lect, 'edm'))]) {
     if (!candidate) continue;
     const edm = await getPublishedPage(db, candidate);
-    if (edm && edm.page_type === 'edm' && pointer(edm.lect, 'event') === String(eventId)) return edm;
+    if (edm && edm.page_type === 'edm' && edmBelongsToEvent(edm, eventId)) return edm;
   }
   return null;
 }
@@ -182,7 +182,7 @@ async function publicRegistration(
   if (!env.PUBLISHED_DB) return new Response('server misconfigured', { status: 500 });
   const event = await getPublishedPageBySlug(env.PUBLISHED_DB, 'event', route.eventSlug);
   const edm = await getPublishedPageBySlug(env.PUBLISHED_DB, 'edm', route.edmSlug);
-  if (!event || !edm || pointer(edm.lect, 'event') !== String(event.id)) return new Response('not found', { status: 404 });
+  if (!event || !edm || !edmBelongsToEvent(edm, event.id)) return new Response('not found', { status: 404 });
 
   if (request.method === 'POST') return submitPublicRegistration(request, env, url, event, route.languagePrefix);
 
@@ -604,6 +604,10 @@ function validContext(event: CmsPage, list: CmsPage, guest: CmsPage, eventId: nu
     // The list belongs to the event via its `event` pointer (not parent page).
     && list.page_type === 'mail_list' && pointer(list.lect, 'event') === String(eventId)
     && guest.page_type === 'guest' && guest.page_id === listId;
+}
+
+function edmBelongsToEvent(edm: CmsPage, eventId: number): boolean {
+  return pointer(edm.lect, 'event') === String(eventId) || edm.page_id === eventId;
 }
 
 /**
