@@ -19,6 +19,7 @@ cms-plugin-events ──publish──▶ cms-published (D1) ──read──▶ 
 | `GET /:lang?/rsvp/:eventId/:listId/:guestId/:sig` | The RSVP form (`?edm=` picks the EDM whose `rsvp-*` blocks define it) |
 | `POST` same path | Submit (interim: F1 draft-guest update as the events plugin) |
 | `GET /:lang?/rsvp/thank-you` | Post-submit page |
+| `GET/POST /unsubscribe/:listId/:guestId/:sig` | EDM unsubscribe — confirm page, then sets the guest's `not_send` flag over F1 |
 | `GET /healthz` | Liveness + deploy version |
 
 `:lang` is one of `mis / en / zh-hant / zh-hans` (legacy Eventuai parity); the

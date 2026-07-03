@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unsubscribe</title>
+<style>
+body{margin:0;background:#f3f4f6;font-family:system-ui,sans-serif;color:#111827}
+.card{max-width:34rem;margin:4rem auto;background:#fff;padding:2rem;border-radius:1rem;box-shadow:0 1px 3px #0002}
+h1{margin-top:0}
+button{border:0;border-radius:.5rem;padding:.7rem 1.2rem;font:inherit;font-weight:700;cursor:pointer;background:#4f46e5;color:#fff}
+.muted{color:#6b7280}
+</style>
+</head>
+<body>
+<main class="card">
+  {% if done %}
+    <h1>You're unsubscribed</h1>
+    <p>{% if email != blank %}<span class="muted">{{ email | escape }}</span> will{% else %}You will{% endif %} no longer receive emails about this event.</p>
+  {% else %}
+    <h1>Unsubscribe</h1>
+    <p>Stop receiving emails about this event{% if email != blank %} at <span class="muted">{{ email | escape }}</span>{% endif %}?</p>
+    <form method="post" action="{{ action | escape }}">
+      <button type="submit">Unsubscribe</button>
+    </form>
+  {% endif %}
+</main>
+</body>
+</html>

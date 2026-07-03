@@ -318,3 +318,55 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(updateHeaders?.get('x-plugin-secret')).toBe(SECRET);
   });
 });
+
+describe('EDM unsubscribe', () => {
+  async function unsubPath(): Promise<string> {
+    return `/unsubscribe/8/9/${await signPayload(SECRET, 'unsub:8:9')}`;
+  }
+
+  it('shows a confirm page for a valid signed link (published guest only)', async () => {
+    noCmsFetch();
+    const db = publishedDb(seed({ guestLect: { plus_guests: '0', response: [{}], email: 'ada@example.com' } }));
+    const response = await site.fetch(request(await unsubPath()), env(db));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Unsubscribe');
+    expect(html).toContain('a***@example.com');
+    expect(html).toContain(`action="${await unsubPath()}"`);
+  });
+
+  it('404s on a bad signature', async () => {
+    noCmsFetch();
+    const response = await site.fetch(request('/unsubscribe/8/9/deadbeef'), env(publishedDb(seed())));
+    expect(response.status).toBe(404);
+  });
+
+  it('sets not_send over F1 on confirm', async () => {
+    let updateBody: Record<string, unknown> | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+      if (url.pathname === '/__cms/pages/9' && init?.method === 'PUT') {
+        updateBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return Response.json({ page: { id: 9 } });
+      }
+      return new Response('not found', { status: 404 });
+    }));
+
+    const response = await site.fetch(request(await unsubPath(), { method: 'POST' }), env(publishedDb(seed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain("You're unsubscribed");
+    expect(updateBody).toMatchObject({ lect: { not_send: '1' } });
+  });
+
+  it('skips the write when the guest already opted out', async () => {
+    noCmsFetch();
+    const db = publishedDb(seed({ guestLect: { plus_guests: '0', response: [{}], not_send: '1' } }));
+    const response = await site.fetch(request(await unsubPath(), { method: 'POST' }), env(db));
+    const html = await response.text();
+    expect(response.status).toBe(200);
+    expect(html).toContain("You're unsubscribed");
+  });
+});

@@ -12,6 +12,7 @@
 // ============================================================
 
 import { handleRsvp, type RsvpEnv } from './rsvp';
+import { handleUnsubscribe } from './unsubscribe';
 
 interface Env extends RsvpEnv {
   CF_VERSION_METADATA?: { id?: string };
@@ -40,6 +41,9 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   const rsvp = await handleRsvp(request, env, url);
   if (rsvp) return rsvp;
+
+  const unsubscribe = await handleUnsubscribe(request, env, url);
+  if (unsubscribe) return unsubscribe;
 
   return new Response('not found', { status: 404 });
 }
