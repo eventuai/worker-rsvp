@@ -325,6 +325,7 @@ async function formBlockVMs(
   options: { publicRegistration?: boolean; preview?: boolean } = {},
 ): Promise<Array<Record<string, unknown>>> {
   const vms: Array<Record<string, unknown>> = [];
+  let hasPublicRegistrationForm = false;
   for (const [index, block] of blocks(edm.lect).entries()) {
     const type = attr(block, '_type');
     const key = attr(block, '_id') || String(index);
@@ -412,16 +413,18 @@ async function formBlockVMs(
         break;
       case 'rsvp-public-form':
         if (options.publicRegistration) {
+          hasPublicRegistrationForm = true;
           vms.push({
             type,
             title,
             bodyHtml,
             salutationLabel: localized(block, 'label_salutation', language) || 'Salutation',
-            firstNameLabel: localized(block, 'label_first_name', language) || 'First name',
-            lastNameLabel: localized(block, 'label_last_name', language) || 'Last name',
+            salutationSelectLabel: localized(block, 'label_select', language) || 'Please Select',
+            firstNameLabel: localized(block, 'label_first_name', language) || 'First Name',
+            lastNameLabel: localized(block, 'label_last_name', language) || 'Last Name',
             emailLabel: localized(block, 'label_email', language) || 'Email',
-            organizationLabel: localized(block, 'label_organization', language) || 'Organization',
-            jobTitleLabel: localized(block, 'label_job_title', language) || 'Job title',
+            organizationLabel: localized(block, 'label_organization', language) || 'Company / Organization',
+            jobTitleLabel: localized(block, 'label_job_title', language) || 'Position',
             inputs: customInputVMs(block, 'custom_input', 'rsvp-public-', language),
           });
         }
@@ -486,6 +489,21 @@ async function formBlockVMs(
       default:
         break;
     }
+  }
+  if (options.publicRegistration && !hasPublicRegistrationForm) {
+    vms.push({
+      type: 'rsvp-public-form',
+      title: '',
+      bodyHtml: '',
+      salutationLabel: 'Salutation',
+      salutationSelectLabel: 'Please Select',
+      firstNameLabel: 'First Name',
+      lastNameLabel: 'Last Name',
+      emailLabel: 'Email',
+      organizationLabel: 'Company / Organization',
+      jobTitleLabel: 'Position',
+      inputs: [],
+    });
   }
   return vms;
 }
@@ -607,6 +625,8 @@ async function submitPublicRegistration(
   const name = [firstName, lastName].filter(Boolean).join(' ').trim();
   const email = formText(form, 'email');
   if (!name || !email) return new Response('Name and email are required', { status: 400 });
+  const salutation = formText(form, 'prefix') || formText(form, 'salutation');
+  const organization = formText(form, 'company') || formText(form, 'organization');
 
   const namedPlusGuests = [...form.entries()]
     .filter(([field, value]) => /^rsvp-plus-one-\d+:name$/.test(field) && String(value).trim() !== '')
@@ -620,12 +640,13 @@ async function submitPublicRegistration(
     name,
     lect: {
       _type: 'guest',
-      salutation: formText(form, 'salutation'),
+      prefix: salutation,
+      salutation,
       name: { en: name },
       first_name: { en: firstName },
       last_name: { en: lastName },
       email,
-      organization: formText(form, 'organization'),
+      organization,
       job_title: formText(form, 'job_title'),
       plus_guests: String(namedPlusGuests),
       status: 'confirmed',

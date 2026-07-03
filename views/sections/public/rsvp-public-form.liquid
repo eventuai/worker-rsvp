@@ -4,8 +4,16 @@
 
   <div class="grid-2">
     <div>
-      <label for="salutation">{{ block.salutationLabel | escape }}</label>
-      <input type="text" id="salutation" name="salutation">
+      <label for="salutation">{{ block.salutationLabel | escape }} *</label>
+      <select name="prefix" id="salutation" required>
+        <option value="">{{ block.salutationSelectLabel | default: 'Please Select' | escape }}</option>
+        <option value="dr">Dr.</option>
+        <option value="miss">Miss.</option>
+        <option value="mr">Mr.</option>
+        <option value="mrs">Mrs.</option>
+        <option value="ms">Ms.</option>
+        <option value="prof">Prof.</option>
+      </select>
     </div>
     <div></div>
     <div>
@@ -13,20 +21,20 @@
       <input type="text" id="first_name" name="first_name" required>
     </div>
     <div>
-      <label for="last_name">{{ block.lastNameLabel | escape }}</label>
-      <input type="text" id="last_name" name="last_name">
+      <label for="last_name">{{ block.lastNameLabel | escape }} *</label>
+      <input type="text" id="last_name" name="last_name" required>
     </div>
     <div>
-      <label for="email">{{ block.emailLabel | escape }} *</label>
-      <input type="email" id="email" name="email" required>
-    </div>
-    <div>
-      <label for="organization">{{ block.organizationLabel | escape }}</label>
-      <input type="text" id="organization" name="organization">
+      <label for="company">{{ block.organizationLabel | escape }}</label>
+      <input type="text" id="company" name="company">
     </div>
     <div>
       <label for="job_title">{{ block.jobTitleLabel | escape }}</label>
       <input type="text" id="job_title" name="job_title">
+    </div>
+    <div>
+      <label for="email">{{ block.emailLabel | escape }} *</label>
+      <input type="email" id="email" name="email" required>
     </div>
   </div>
 

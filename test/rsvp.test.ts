@@ -186,6 +186,19 @@ function pageIdOnlyEdmSeed(): SeedPage[] {
   return pages;
 }
 
+function defaultPublicFormSeed(): SeedPage[] {
+  const pages = seed();
+  const edm = pages.find((page) => page.id === 30);
+  const lect = edm?.lect;
+  if (edm && lect && Array.isArray(lect._blocks)) {
+    edm.lect = {
+      ...lect,
+      _blocks: lect._blocks.filter((block) => (block as Record<string, unknown>)._type !== 'rsvp-public-form'),
+    };
+  }
+  return pages;
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -346,6 +359,22 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(response.status).toBe(200);
     expect(html).toContain('Tell us who you are.');
     expect(html).not.toContain('<nav class="langs">');
+  });
+
+  it('renders the default legacy new-guest fields when the EDM has no public-form block', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request('/en/rsvp/launch-night/invite'), env(publishedDb(defaultPublicFormSeed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('<label for="salutation">Salutation *</label>');
+    expect(html).toContain('<option value="">Please Select</option>');
+    expect(html).toContain('<label for="first_name">First Name *</label>');
+    expect(html).toContain('<label for="last_name">Last Name *</label>');
+    expect(html).toContain('<label for="company">Company / Organization</label>');
+    expect(html).toContain('<label for="job_title">Position</label>');
+    expect(html).toContain('<label for="email">Email *</label>');
   });
 
   it('renders public registration when the EDM is attached by parent page_id', async () => {
@@ -511,7 +540,8 @@ describe('public RSVP form (EDM-driven, published data)', () => {
         first_name: 'Grace',
         last_name: 'Hopper',
         email: 'grace@example.com',
-        organization: 'Navy',
+        prefix: 'dr',
+        company: 'Navy',
         job_title: 'Rear Admiral',
         'rsvp-public-source': 'Friend',
         'rsvp-plus-one-1:name': 'Ada',
@@ -525,6 +555,8 @@ describe('public RSVP form (EDM-driven, published data)', () => {
       page_id: 80,
       name: 'Grace Hopper',
       lect: {
+        prefix: 'dr',
+        salutation: 'dr',
         email: 'grace@example.com',
         organization: 'Navy',
         job_title: 'Rear Admiral',
