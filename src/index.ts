@@ -11,6 +11,7 @@
 // comes solely from the HMAC-signed link.
 // ============================================================
 
+import { handleHome } from './home';
 import { handleRsvp, type RsvpEnv } from './rsvp';
 import { handleUnsubscribe } from './unsubscribe';
 
@@ -38,6 +39,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (url.pathname === '/healthz') {
     return Response.json({ ok: true, version: env.CF_VERSION_METADATA?.id ?? 'dev' });
   }
+
+  const home = await handleHome(env, url);
+  if (home) return home;
 
   const rsvp = await handleRsvp(request, env, url);
   if (rsvp) return rsvp;

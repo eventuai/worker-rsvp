@@ -52,6 +52,15 @@ export async function getPublishedPageBySlug(db: D1Database, pageType: string, s
   return row ? rowToPage(row) : null;
 }
 
+/** Published pages by type for public listing pages. */
+export async function getPublishedPagesByType(db: D1Database, pageType: string): Promise<CmsPage[]> {
+  const { results } = await db
+    .prepare(`SELECT ${PAGE_COLUMNS} FROM live_pages WHERE page_type = ? ORDER BY weight ASC, name COLLATE NOCASE ASC`)
+    .bind(pageType)
+    .all<LivePageRow>();
+  return results.map(rowToPage);
+}
+
 /** Several published pages by id in one query. Missing ids are absent from the map. */
 export async function getPublishedPages(db: D1Database, ids: number[]): Promise<Map<number, CmsPage>> {
   const unique = [...new Set(ids)];

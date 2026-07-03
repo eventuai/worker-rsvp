@@ -68,6 +68,8 @@ function publishedDb(pages: SeedPage[]): D1Database {
         bind(...values: unknown[]) {
           const matched = sql.includes('page_type = ? AND slug = ?')
             ? rows.filter((row) => row.page_type === values[0] && row.slug === values[1])
+            : sql.includes('WHERE page_type = ?')
+              ? rows.filter((row) => row.page_type === values[0])
             : rows.filter((row) => values.includes(row.id));
           return {
             async first() { return matched[0] ?? null; },
@@ -186,6 +188,20 @@ function noCmsFetch(): void {
 }
 
 describe('public RSVP form (EDM-driven, published data)', () => {
+  it('lists published events and public registration links on the homepage', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request('/'), env(publishedDb(seed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Published events');
+    expect(html).toContain('Launch Night');
+    expect(html).toContain('event: launch-night');
+    expect(html).toContain('edm: invite');
+    expect(html).toContain('href="/en/rsvp/launch-night/invite/new"');
+  });
+
   it('renders the EDM blocks as a form, reading only the published DB', async () => {
     noCmsFetch();
 

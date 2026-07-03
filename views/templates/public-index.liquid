@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="{{ language | escape }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Published events</title>
+<style>
+body{margin:0;background:#f3f4f6;font-family:system-ui,sans-serif;font-size:16px;color:#111827;line-height:1.5}
+.shell{max-width:52rem;margin:3rem auto;padding:0 1rem}
+.panel{background:#fff;padding:2rem;border-radius:1rem;box-shadow:0 1px 3px #0002}
+h1{margin:0;font-size:1.85rem}
+.muted{color:#6b7280}
+.langs{font-size:.85rem;margin-bottom:1rem}
+.langs a{color:#6b7280;text-decoration:none;margin-right:.75rem}
+.langs a.active{color:#111827;font-weight:700;text-decoration:underline}
+.event{border-top:1px solid #e5e7eb;padding:1.25rem 0}
+.event:first-of-type{border-top:0}
+.event h2{font-size:1.15rem;margin:.2rem 0}
+.slug{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;color:#6b7280;word-break:break-word}
+.forms{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.75rem}
+.button{display:inline-flex;align-items:center;border-radius:.5rem;background:#4f46e5;color:#fff;text-decoration:none;font-weight:700;padding:.55rem .85rem}
+.badge{display:inline-flex;align-items:center;border-radius:.5rem;border:1px solid #d1d5db;color:#6b7280;padding:.5rem .75rem}
+</style>
+</head>
+<body>
+<main class="shell">
+  <section class="panel">
+    <nav class="langs">
+      {% for lang in languages %}<a href="{{ lang.href | escape }}"{% if lang.active %} class="active"{% endif %}>{{ lang.label }}</a>{% endfor %}
+    </nav>
+    <h1>Published events</h1>
+    <p class="muted">Events and public registration forms currently visible to the RSVP worker.</p>
+
+    {% if hasEvents %}
+      {% for event in events %}
+      <article class="event">
+        <h2>{{ event.name | escape }}</h2>
+        <div class="slug">event: {{ event.slug | escape }}</div>
+        {% if event.start != blank %}<div class="muted">{{ event.start | escape }}</div>{% endif %}
+        <div class="forms">
+          {% if event.hasPublicForms %}
+            {% for form in event.publicForms %}
+            <a class="button" href="{{ form.href | escape }}">{{ form.name | escape }}</a>
+            <span class="slug">edm: {{ form.slug | escape }}</span>
+            {% endfor %}
+          {% elsif event.hasForms %}
+            <span class="badge">No EDM with public registration form</span>
+            {% for form in event.forms %}
+            <span class="slug">edm: {{ form.slug | escape }}</span>
+            {% endfor %}
+          {% else %}
+            <span class="badge">No published EDMs</span>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    {% else %}
+      <p class="muted">No published events found.</p>
+    {% endif %}
+  </section>
+</main>
+</body>
+</html>
