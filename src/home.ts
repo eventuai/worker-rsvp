@@ -22,14 +22,19 @@ export async function handleHome(env: HomeEnv, url: URL): Promise<Response | nul
     const forms = edms
       .filter((edm) => edmBelongsToEvent(edm, event.id))
       .map((edm) => ({
+        id: edm.id,
         name: localized(edm.lect, 'subject', language) || edm.name,
         slug: edm.slug,
+        pageId: edm.page_id ?? '',
+        eventPointer: pointer(edm.lect, 'event'),
         href: `${prefix}/rsvp/${event.slug}/${edm.slug}/new`,
         hasPublicForm: hasPublicForm(edm),
       }));
     return {
+      id: event.id,
       name: localized(event.lect, 'name', language) || event.name,
       slug: event.slug,
+      pageId: event.page_id ?? '',
       start: event.start ?? '',
       forms,
       hasForms: forms.length > 0,

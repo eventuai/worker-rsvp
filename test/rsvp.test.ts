@@ -207,8 +207,11 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(response.status).toBe(200);
     expect(html).toContain('Published events');
     expect(html).toContain('Launch Night');
-    expect(html).toContain('event: launch-night');
-    expect(html).toContain('edm: invite');
+    expect(html).toContain('event id: 7');
+    expect(html).toContain('event slug: launch-night');
+    expect(html).toContain('edm id: 30');
+    expect(html).toContain('edm slug: invite');
+    expect(html).toContain('edm pointer: 7');
     expect(html).toContain('href="/en/rsvp/launch-night/invite/new"');
   });
 
@@ -219,7 +222,9 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     const html = await response.text();
 
     expect(response.status).toBe(200);
-    expect(html).toContain('edm: invite');
+    expect(html).toContain('edm id: 30');
+    expect(html).toContain('edm slug: invite');
+    expect(html).toContain('edm parent: 7');
     expect(html).toContain('href="/en/rsvp/launch-night/invite/new"');
   });
 
