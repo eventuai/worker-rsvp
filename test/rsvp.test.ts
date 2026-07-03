@@ -169,6 +169,7 @@ function seed(overrides: { guestLect?: Record<string, unknown>; listLect?: Recor
           },
           { _type: 'rsvp-sessions', title: { en: 'Sessions' } },
           { _type: 'rsvp-qrcode', title: { en: 'Your pass' }, message: { en: 'Scan at the door' }, size: '200' },
+          { _type: 'picture', picture: '/media/pictures/invite.jpg', caption: { en: 'Invite artwork' } },
         ],
       },
     },
@@ -258,6 +259,7 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).toContain('<svg');
     // EDM-configured accept button
     expect(html).toContain('Count me in');
+    expect(html).toContain('src="https://cms.test/media/pictures/invite.jpg"');
   });
 
   it('applies security headers to every response', async () => {
@@ -319,6 +321,8 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).toContain('name="meal-1-food"');
     expect(html).not.toContain('Scan at the door');
     expect(html).not.toContain('Decline');
+    expect(html).not.toContain('<nav class="langs">');
+    expect(html).toContain('src="https://cms.test/media/pictures/invite.jpg"');
   });
 
   it('renders public registration when event and EDM refs are ids or slugs', async () => {
@@ -331,6 +335,17 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     const mixed = await site.fetch(request('/en/rsvp/7/invite/new'), env(publishedDb(seed())));
     expect(mixed.status).toBe(200);
     expect(await mixed.text()).toContain('Tell us who you are.');
+  });
+
+  it('renders the legacy public registration route without /new', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request('/en/rsvp/launch-night/invite'), env(publishedDb(seed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Tell us who you are.');
+    expect(html).not.toContain('<nav class="langs">');
   });
 
   it('renders public registration when the EDM is attached by parent page_id', async () => {
@@ -355,6 +370,7 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).toContain('name="meal-1-food"');
     expect(html).toContain('action="#"');
     expect(html).not.toContain('Scan at the door');
+    expect(html).not.toContain('<nav class="langs">');
   });
 
   it('renders the legacy EDM preview route when event and EDM refs are ids or slugs', async () => {

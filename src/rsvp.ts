@@ -67,6 +67,14 @@ export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Prom
       languagePrefix: urlLanguage ? `/${urlLanguage}` : '',
     });
   }
+  if (path.length === 3 && path[1] && path[2]) {
+    return publicRegistration(request, env, url, {
+      eventRef: path[1],
+      edmRef: path[2],
+      language: urlLanguage || DEFAULT_LANGUAGE,
+      languagePrefix: urlLanguage ? `/${urlLanguage}` : '',
+    });
+  }
 
   const eventId = pageId(path[1]);
   const listId = pageId(path[2]);
@@ -161,6 +169,8 @@ async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<R
     blocks: formBlocks,
     meals,
     hasMeals: meals.length > 0,
+    showEventLabel: true,
+    showLanguageSelector: true,
     languages: RSVP_LANGUAGES
       .filter((code) => code !== 'mis')
       .map((code) => ({
@@ -234,14 +244,8 @@ async function previewRsvpForm(
     hasMeals: meals.length > 0,
     preview: true,
     previewName: edm.name,
-    languages: RSVP_LANGUAGES
-      .filter((code) => code !== 'mis')
-      .map((code) => ({
-        code,
-        label: code === 'zh-hant' ? '繁體中文' : code === 'zh-hans' ? '简体中文' : 'English',
-        href: `/${code}${stripLanguagePrefix(url.pathname)}`,
-        active: code === language,
-      })),
+    showEventLabel: false,
+    showLanguageSelector: false,
   });
 }
 
@@ -294,14 +298,8 @@ async function publicRegistrationForm(
     meals,
     hasMeals: meals.length > 0,
     hideDecline: true,
-    languages: RSVP_LANGUAGES
-      .filter((code) => code !== 'mis')
-      .map((code) => ({
-        code,
-        label: code === 'zh-hant' ? '繁體中文' : code === 'zh-hans' ? '简体中文' : 'English',
-        href: `/${code}${stripLanguagePrefix(url.pathname)}`,
-        active: code === language,
-      })),
+    showEventLabel: false,
+    showLanguageSelector: false,
   });
 }
 
@@ -334,6 +332,19 @@ async function formBlockVMs(
     const bodyHtml = personalize(safeHtml(localized(block, 'body', language)));
 
     switch (type) {
+      case 'picture': {
+        const src = assetUrl(env.CMS_URL, attr(block, 'picture'));
+        if (src) {
+          vms.push({
+            type,
+            src,
+            caption: localized(block, 'caption', language) || attr(block, 'caption'),
+            width: attr(block, 'width'),
+            align: attr(block, 'align'),
+          });
+        }
+        break;
+      }
       case 'paragraph':
         vms.push({ type, subject: personalize(localized(block, 'subject', language)), bodyHtml });
         break;
@@ -470,10 +481,8 @@ async function formBlockVMs(
         });
         break;
       }
-      // rsvp-accept / rsvp-button render as the form's submit buttons;
-      // rsvp-public-form is the self-registration landing block (not ported —
-      // response storage is still an open decision). Everything else (pictures,
-      // logos, unsubscribe, …) is email-only.
+      // rsvp-accept / rsvp-button render as the form's submit buttons.
+      // Email-only blocks such as attachments and unsubscribe are skipped.
       default:
         break;
     }
@@ -740,6 +749,14 @@ function allowRefill(guest: CmsPage): boolean {
 function truthy(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return normalized === '1' || normalized === 'yes' || normalized === 'true';
+}
+
+function assetUrl(base: string | undefined, value: string): string {
+  const src = value.trim();
+  if (!src) return '';
+  if (/^(https?:)?\/\//i.test(src) || src.startsWith('data:')) return src;
+  const origin = (base ?? '').replace(/\/+$/, '');
+  return origin && src.startsWith('/') ? `${origin}${src}` : src;
 }
 
 function htmlResponse(html: string): Response {

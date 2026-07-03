@@ -1,0 +1,7 @@
+<div class="block">
+  <img
+    src="{{ block.src | escape }}"
+    alt="{{ block.caption | default: 'picture' | escape }}"
+    style="display:block;max-width:100%;height:auto;{% if block.width != blank %}width:{{ block.width | escape }};{% endif %}{% if block.align == 'center' %}margin-left:auto;margin-right:auto;{% elsif block.align == 'right' %}margin-left:auto;{% endif %}"
+  >
+</div>

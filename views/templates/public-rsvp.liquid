@@ -43,8 +43,10 @@ button{border:0;border-radius:.5rem;padding:.7rem 1.2rem;font:inherit;font-weigh
 <body>
 {% if preview %}<div class="preview">Preview of RSVP form: {{ previewName | escape }}</div>{% endif %}
 <main class="card">
+  {% if showEventLabel %}
   <p class="muted">{{ eventName | escape }}{% if listName != blank %} · {{ listName | escape }}{% endif %}</p>
-  {% if hasEdm %}
+  {% endif %}
+  {% if hasEdm and showLanguageSelector %}
   <nav class="langs">
     {% for lang in languages %}<a href="{{ lang.href | escape }}"{% if lang.active %} class="active"{% endif %}>{{ lang.label }}</a>{% endfor %}
   </nav>
@@ -62,6 +64,7 @@ button{border:0;border-radius:.5rem;padding:.7rem 1.2rem;font:inherit;font-weigh
     {% if hasEdm %}
       {% for block in blocks %}
         {% case block.type %}
+          {% when 'picture' %}{% render 'public/picture', block: block %}
           {% when 'paragraph' %}{% render 'public/paragraph', block: block %}
           {% when 'table' %}{% render 'public/table', block: block %}
           {% when 'button' %}{% render 'public/button', block: block %}
