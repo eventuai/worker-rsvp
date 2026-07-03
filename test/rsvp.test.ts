@@ -321,6 +321,18 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).not.toContain('Decline');
   });
 
+  it('renders public registration when event and EDM refs are ids or slugs', async () => {
+    noCmsFetch();
+
+    const byIds = await site.fetch(request('/en/rsvp/7/30/new'), env(publishedDb(seed())));
+    expect(byIds.status).toBe(200);
+    expect(await byIds.text()).toContain('Tell us who you are.');
+
+    const mixed = await site.fetch(request('/en/rsvp/7/invite/new'), env(publishedDb(seed())));
+    expect(mixed.status).toBe(200);
+    expect(await mixed.text()).toContain('Tell us who you are.');
+  });
+
   it('renders public registration when the EDM is attached by parent page_id', async () => {
     noCmsFetch();
 
@@ -329,6 +341,47 @@ describe('public RSVP form (EDM-driven, published data)', () => {
 
     expect(response.status).toBe(200);
     expect(html).toContain('Tell us who you are.');
+  });
+
+  it('renders the legacy EDM preview route without a signature', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request('/rsvp/launch-night/30/preview'), env(publishedDb(seed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Preview of RSVP form: Invite');
+    expect(html).toContain('Dear Guest');
+    expect(html).toContain('name="meal-1-food"');
+    expect(html).toContain('action="#"');
+    expect(html).not.toContain('Scan at the door');
+  });
+
+  it('renders the legacy EDM preview route when event and EDM refs are ids or slugs', async () => {
+    noCmsFetch();
+
+    const byIds = await site.fetch(request('/rsvp/7/30/preview'), env(publishedDb(seed())));
+    expect(byIds.status).toBe(200);
+    expect(await byIds.text()).toContain('Preview of RSVP form: Invite');
+
+    const mixed = await site.fetch(request('/rsvp/7/invite/preview'), env(publishedDb(seed())));
+    expect(mixed.status).toBe(200);
+    expect(await mixed.text()).toContain('Preview of RSVP form: Invite');
+
+    const bySlugs = await site.fetch(request('/rsvp/launch-night/invite/preview'), env(publishedDb(seed())));
+    expect(bySlugs.status).toBe(200);
+    expect(await bySlugs.text()).toContain('Preview of RSVP form: Invite');
+  });
+
+  it('localizes the legacy EDM preview route', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request('/zh-hant/rsvp/launch-night/30/preview'), env(publishedDb(seed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('親愛的 Guest');
+    expect(html).toContain('餐飲選擇');
   });
 
   it('renders the plain fallback form when no valid EDM resolves', async () => {

@@ -52,10 +52,17 @@ export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Prom
   if (urlLanguage) path.shift();
   if (path[0] !== 'rsvp') return null;
   if (path[1] === 'thank-you') return thankYou(env.VIEWS, url.searchParams.get('status') ?? 'confirmed');
+  if (path[3] === 'preview') {
+    return previewRsvp(env, url, {
+      eventRef: path[1] ?? '',
+      edmRef: path[2] ?? '',
+      language: urlLanguage || DEFAULT_LANGUAGE,
+    });
+  }
   if (path[3] === 'new') {
     return publicRegistration(request, env, url, {
-      eventSlug: path[1] ?? '',
-      edmSlug: path[2] ?? '',
+      eventRef: path[1] ?? '',
+      edmRef: path[2] ?? '',
       language: urlLanguage || DEFAULT_LANGUAGE,
       languagePrefix: urlLanguage ? `/${urlLanguage}` : '',
     });
@@ -167,10 +174,75 @@ async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<R
 }
 
 interface PublicRegistrationRoute {
-  eventSlug: string;
-  edmSlug: string;
+  eventRef: string;
+  edmRef: string;
   language: string;
   languagePrefix: string;
+}
+
+interface PreviewRoute {
+  eventRef: string;
+  edmRef: string;
+  language: string;
+}
+
+async function previewRsvp(env: RsvpEnv, url: URL, route: PreviewRoute): Promise<Response> {
+  if (!env.PUBLISHED_DB) return new Response('server misconfigured', { status: 500 });
+  const [event, edm] = await Promise.all([
+    getPublishedPageByRef(env.PUBLISHED_DB, 'event', route.eventRef),
+    getPublishedPageByRef(env.PUBLISHED_DB, 'edm', route.edmRef),
+  ]);
+  if (!event || !edm || !edmBelongsToEvent(edm, event.id)) {
+    return new Response('not found', { status: 404 });
+  }
+
+  const html = await previewRsvpForm(env, url, event, edm, route.language);
+  return htmlResponse(html);
+}
+
+async function previewRsvpForm(
+  env: RsvpEnv,
+  url: URL,
+  event: CmsPage,
+  edm: CmsPage,
+  language: string,
+): Promise<string> {
+  const guest = previewGuest();
+  const tokens = guestTokens(guest);
+  const personalize = (value: string): string => (value ? applyTemplateTokens(value, tokens) : value);
+  const edmLect = edm.lect ?? {};
+  const formBlocks = await formBlockVMs(env, edm, event, guest, 0, language, personalize, { preview: true });
+  const meals = formBlocks.filter((block) => block.type === 'rsvp-meal-preferences');
+
+  return renderLiquid(env.VIEWS, '/templates/public-rsvp.liquid', {
+    language,
+    action: '#',
+    hasEdm: true,
+    eventName: localized(event.lect, 'name', language) || event.name,
+    listName: '',
+    guestName: guest.name,
+    status: '',
+    plusGuests: '0',
+    subject: personalize(localized(edmLect, 'subject', language)),
+    heading: personalize(localized(edmLect, 'heading', language)),
+    bodyHtml: personalize(safeHtml(localized(edmLect, 'body', language))),
+    acceptLabel: localized(edmLect, 'rsvp_form_button', language)
+      || localized(edmLect, 'rsvp_button', language)
+      || 'Accept',
+    blocks: formBlocks,
+    meals,
+    hasMeals: meals.length > 0,
+    preview: true,
+    previewName: edm.name,
+    languages: RSVP_LANGUAGES
+      .filter((code) => code !== 'mis')
+      .map((code) => ({
+        code,
+        label: code === 'zh-hant' ? '繁體中文' : code === 'zh-hans' ? '简体中文' : 'English',
+        href: `/${code}${stripLanguagePrefix(url.pathname)}`,
+        active: code === language,
+      })),
+  });
 }
 
 async function publicRegistration(
@@ -180,8 +252,10 @@ async function publicRegistration(
   route: PublicRegistrationRoute,
 ): Promise<Response> {
   if (!env.PUBLISHED_DB) return new Response('server misconfigured', { status: 500 });
-  const event = await getPublishedPageBySlug(env.PUBLISHED_DB, 'event', route.eventSlug);
-  const edm = await getPublishedPageBySlug(env.PUBLISHED_DB, 'edm', route.edmSlug);
+  const [event, edm] = await Promise.all([
+    getPublishedPageByRef(env.PUBLISHED_DB, 'event', route.eventRef),
+    getPublishedPageByRef(env.PUBLISHED_DB, 'edm', route.edmRef),
+  ]);
   if (!event || !edm || !edmBelongsToEvent(edm, event.id)) return new Response('not found', { status: 404 });
 
   if (request.method === 'POST') return submitPublicRegistration(request, env, url, event, route.languagePrefix);
@@ -250,7 +324,7 @@ async function formBlockVMs(
   listId: number,
   language: string,
   personalize: (value: string) => string,
-  options: { publicRegistration?: boolean } = {},
+  options: { publicRegistration?: boolean; preview?: boolean } = {},
 ): Promise<Array<Record<string, unknown>>> {
   const vms: Array<Record<string, unknown>> = [];
   for (const [index, block] of blocks(edm.lect).entries()) {
@@ -379,7 +453,7 @@ async function formBlockVMs(
         });
         break;
       case 'rsvp-qrcode': {
-        if (options.publicRegistration || !guest) break;
+        if (options.publicRegistration || options.preview || !guest) break;
         // Same signed check-in payload the events plugin's admin guest-QR view
         // mints, resolved by cms-plugin-checkin's /checkin/… routes.
         const token = `${listId}.${guest.id}`;
@@ -590,6 +664,31 @@ function formText(form: FormData, key: string): string {
   return String(form.get(key) ?? '').trim();
 }
 
+function previewGuest(): CmsPage {
+  return {
+    id: 0,
+    uuid: '',
+    page_type: 'guest',
+    name: 'Guest',
+    slug: '',
+    weight: 0,
+    start: null,
+    end: null,
+    timezone: null,
+    page_id: null,
+    created_at: '',
+    updated_at: '',
+    lect: {
+      name: { en: 'Guest' },
+      salutation: '',
+      organization: '',
+      job_title: '',
+      plus_guests: '0',
+      response: [{}],
+    },
+  };
+}
+
 // ── Thank-you ──────────────────────────────────────────────────────────────────
 
 async function thankYou(views: Fetcher, status: string): Promise<Response> {
@@ -598,6 +697,19 @@ async function thankYou(views: Fetcher, status: string): Promise<Response> {
 }
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
+
+async function getPublishedPageByRef(db: D1Database, pageType: string, ref: string): Promise<CmsPage | null> {
+  const value = ref.trim();
+  if (!value) return null;
+
+  const id = pageId(value);
+  if (id) {
+    const page = await getPublishedPage(db, id);
+    if (page?.page_type === pageType) return page;
+  }
+
+  return getPublishedPageBySlug(db, pageType, value);
+}
 
 function validContext(event: CmsPage, list: CmsPage, guest: CmsPage, eventId: number, listId: number): boolean {
   return event.page_type === 'event'
