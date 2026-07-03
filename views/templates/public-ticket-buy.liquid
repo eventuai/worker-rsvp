@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tickets — {{ eventName | escape }}</title>
+<style>
+body{margin:0;background:#f3f4f6;font-family:system-ui,sans-serif;color:#111827}
+.card{max-width:34rem;margin:3rem auto;background:#fff;padding:2rem;border-radius:1rem;box-shadow:0 1px 3px #0002}
+h1{margin:0 0 .25rem;font-size:1.4rem}
+.muted{color:#6b7280;font-size:.9rem}
+.error{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:.75rem 1rem;border-radius:.5rem;margin:1rem 0;font-size:.9rem}
+fieldset{border:0;padding:0;margin:1.25rem 0 0}
+legend{font-weight:600;margin-bottom:.5rem}
+.option{display:flex;gap:.6rem;align-items:flex-start;border:1px solid #e5e7eb;border-radius:.6rem;padding:.75rem;margin-bottom:.5rem;cursor:pointer}
+.option input{margin-top:.2rem}
+.option .price{margin-left:auto;font-weight:600;white-space:nowrap}
+label.field{display:block;margin:1rem 0 0}
+label.field span{display:block;font-size:.9rem;color:#374151;margin-bottom:.25rem}
+input[type=text],input[type=email],select{width:100%;box-sizing:border-box;padding:.55rem .7rem;border:1px solid #d1d5db;border-radius:.5rem;font-size:.95rem}
+button{margin-top:1.5rem;width:100%;padding:.75rem;background:#4f46e5;border:0;border-radius:.6rem;color:#fff;font-size:1rem;font-weight:600;cursor:pointer}
+button:hover{background:#4338ca}
+</style></head>
+<body><main class="card">
+  <h1>{{ eventName | escape }}</h1>
+  <p class="muted">Tickets for {{ guestName | escape }}</p>
+  {% if eventDescription != blank %}<p class="muted">{{ eventDescription | escape }}</p>{% endif %}
+  {% if error != blank %}<div class="error">{{ error | escape }}</div>{% endif %}
+
+  {% if hasTypes and canPay %}
+  <form method="post">
+    <fieldset>
+      <legend>Ticket</legend>
+      {% for type in types %}
+      <label class="option">
+        <input type="radio" name="ticket_type_id" value="{{ type.id }}"{% if type.checked %} checked{% endif %} required>
+        <span>
+          <strong>{{ type.name | escape }}</strong>
+          {% if type.description != blank %}<br><span class="muted">{{ type.description | escape }}</span>{% endif %}
+          {% if type.limited %}<br><span class="muted">{{ type.remaining }} left</span>{% endif %}
+        </span>
+        <span class="price">{{ type.priceLabel | escape }}</span>
+      </label>
+      {% endfor %}
+    </fieldset>
+
+    <label class="field"><span>Quantity</span>
+      <select name="quantity">{% for q in quantities %}<option value="{{ q.value }}"{% if q.selected %} selected{% endif %}>{{ q.value }}</option>{% endfor %}</select>
+    </label>
+
+    <label class="field"><span>Email for your ticket confirmation</span>
+      <input type="email" name="email" required value="{{ email | escape }}">
+    </label>
+
+    <label class="field"><span>Promo code (optional)</span>
+      <input type="text" name="promo_code" value="{{ promoCode | escape }}" autocapitalize="characters" autocomplete="off">
+    </label>
+
+    <fieldset>
+      <legend>Payment</legend>
+      {% if stripeEnabled %}
+      <label class="option"><input type="radio" name="payment_method" value="stripe" checked><span><strong>Pay by card</strong><br><span class="muted">Secure payment via Stripe</span></span></label>
+      {% endif %}
+      {% if offlineEnabled %}
+      <label class="option"><input type="radio" name="payment_method" value="offline"{% unless stripeEnabled %} checked{% endunless %}><span><strong>Offline payment</strong><br><span class="muted">Bank transfer or cash — instructions follow</span></span></label>
+      {% endif %}
+    </fieldset>
+
+    <button type="submit">Continue</button>
+  </form>
+  {% elsif hasTypes %}
+  <p>Ticket sales are not open at the moment. Please check back later.</p>
+  {% else %}
+  <p>No tickets are on sale for this event right now.</p>
+  {% endif %}
+</main></body></html>

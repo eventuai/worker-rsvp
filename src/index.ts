@@ -14,9 +14,10 @@
 import { handleHome } from './home';
 import { handleMedia, type MediaEnv } from './media';
 import { handleRsvp, type RsvpEnv } from './rsvp';
+import { handleTicket, type TicketEnv } from './ticket';
 import { handleUnsubscribe } from './unsubscribe';
 
-interface Env extends RsvpEnv, MediaEnv {
+interface Env extends RsvpEnv, MediaEnv, TicketEnv {
   CF_VERSION_METADATA?: { id?: string };
 }
 
@@ -50,6 +51,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   const rsvp = await handleRsvp(request, env, url);
   if (rsvp) return rsvp;
 
+  const ticket = await handleTicket(request, env, url);
+  if (ticket) return ticket;
+
   const unsubscribe = await handleUnsubscribe(request, env, url);
   if (unsubscribe) return unsubscribe;
 
@@ -60,7 +64,9 @@ function withSecurityHeaders(response: Response): Response {
   const wrapped = new Response(response.body, response);
   const headers = wrapped.headers;
   // Inline <style> is part of the rendered form; everything else stays same-origin.
-  headers.set('content-security-policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  // checkout.stripe.com is in form-action because Chrome applies form-action to
+  // the redirect that follows the ticket checkout form's POST (303 → Stripe).
+  headers.set('content-security-policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' https://checkout.stripe.com");
   headers.set('strict-transport-security', 'max-age=31536000; includeSubDomains; preload');
   headers.set('x-content-type-options', 'nosniff');
   headers.set('x-frame-options', 'DENY');

@@ -43,3 +43,7 @@ CMS_URL = "https://cms.eventuai.com"
 # /checkin/{listId}/{guestId}/{sig} routes) embedded by rsvp-qrcode blocks.
 # Leave unset to fall back to a bare signed token in the QR.
 # CHECKIN_BASE_URL = "https://checkin.eventuai.com"
+# Base URL of the cms-plugin-ticket Worker — the /ticket/buy and /ticket/order
+# pages render data from its /api/* endpoints (signatures in the visitor's URL
+# authenticate every call, so no secret is shared with this Worker).
+# TICKET_PLUGIN_URL = "https://ticket.eventuai.com"
