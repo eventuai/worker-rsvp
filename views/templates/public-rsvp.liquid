@@ -78,10 +78,13 @@ button{border:0;border-radius:.5rem;padding:.7rem 1.2rem;font:inherit;font-weigh
           {% when 'rsvp-pickup' %}{% render 'public/rsvp-pickup', block: block %}
           {% when 'rsvp-sessions' %}{% render 'public/rsvp-sessions', block: block %}
           {% when 'rsvp-qrcode' %}{% render 'public/rsvp-qrcode', block: block %}
-          {% when 'rsvp-public-form' %}{% render 'public/rsvp-public-form', block: block %}
         {% endcase %}
       {% endfor %}
+      {% if publicFormBlock %}
+      <hr>
+      {% render 'public/rsvp-public-form', block: publicFormBlock %}
       <div class="required-note">* required</div>
+      {% endif %}
     {% else %}
       <label>Additional guests</label>
       <input type="number" min="0" name="plus_guests" value="{{ plusGuests | escape }}">

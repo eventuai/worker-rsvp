@@ -19,6 +19,7 @@ interface Env {
   EVENTS_PLUGIN_SECRET?: string;
   CHECKIN_BASE_URL?: string;
   PUBLISHED_DB?: D1Database;
+  MEDIA_BUCKET?: R2Bucket;
   VIEWS: Fetcher;
 }
 
@@ -92,6 +93,22 @@ function env(db: D1Database, overrides: Partial<Env> = {}): Env {
     PUBLISHED_DB: db,
     ...overrides,
   };
+}
+
+function mediaBucket(objects: Record<string, { body: string; contentType: string }>): R2Bucket {
+  return {
+    async get(key: string) {
+      const object = objects[key];
+      if (!object) return null;
+      return {
+        body: new Blob([object.body], { type: object.contentType }).stream(),
+        httpEtag: `"${key}"`,
+        writeHttpMetadata(headers: Headers) {
+          headers.set('content-type', object.contentType);
+        },
+      };
+    },
+  } as unknown as R2Bucket;
 }
 
 function request(path: string, init?: RequestInit): Request {
@@ -169,7 +186,7 @@ function seed(overrides: { guestLect?: Record<string, unknown>; listLect?: Recor
           },
           { _type: 'rsvp-sessions', title: { en: 'Sessions' } },
           { _type: 'rsvp-qrcode', title: { en: 'Your pass' }, message: { en: 'Scan at the door' }, size: '200' },
-          { _type: 'picture', picture: '/media/pictures/invite.jpg', caption: { en: 'Invite artwork' } },
+          { _type: 'picture', picture: { en: '/media/pictures/invite.jpg' }, caption: { en: 'Invite artwork' } },
         ],
       },
     },
@@ -194,6 +211,19 @@ function defaultPublicFormSeed(): SeedPage[] {
     edm.lect = {
       ...lect,
       _blocks: lect._blocks.filter((block) => (block as Record<string, unknown>)._type !== 'rsvp-public-form'),
+    };
+  }
+  return pages;
+}
+
+function placeholderTokenSeed(): SeedPage[] {
+  const pages = seed();
+  const edm = pages.find((page) => page.id === 30);
+  if (edm) {
+    edm.lect = {
+      ...(edm.lect ?? {}),
+      heading: { en: 'Welcome {{ zh_hant_salutation }}{{ zh_hant_name }}' },
+      body: { en: '<p>Hello {{name}} {{unknown_placeholder}}</p>' },
     };
   }
   return pages;
@@ -272,7 +302,7 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).toContain('<svg');
     // EDM-configured accept button
     expect(html).toContain('Count me in');
-    expect(html).toContain('src="https://cms.test/media/pictures/invite.jpg"');
+    expect(html).toContain('src="/media/pictures/invite.jpg"');
   });
 
   it('applies security headers to every response', async () => {
@@ -281,6 +311,22 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(response.status).toBe(404);
     expect(response.headers.get('x-frame-options')).toBe('DENY');
     expect(response.headers.get('content-security-policy')).toContain("default-src 'self'");
+  });
+
+  it('serves CMS media from the shared R2 bucket', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request('/media/pictures/invite.jpg'), env(publishedDb([]), {
+      MEDIA_BUCKET: mediaBucket({
+        'pictures/invite.jpg': { body: 'image-bytes', contentType: 'image/jpeg' },
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('image/jpeg');
+    expect(response.headers.get('cache-control')).toContain('max-age=31536000');
+    expect(response.headers.get('content-disposition')).toBeNull();
+    expect(await response.text()).toBe('image-bytes');
   });
 
   it('localizes via the URL language prefix (legacy /:language/rsvp/…)', async () => {
@@ -335,7 +381,22 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).not.toContain('Scan at the door');
     expect(html).not.toContain('Decline');
     expect(html).not.toContain('<nav class="langs">');
-    expect(html).toContain('src="https://cms.test/media/pictures/invite.jpg"');
+    expect(html).toContain('src="/media/pictures/invite.jpg"');
+    expect(html.indexOf('Sessions')).toBeLessThan(html.indexOf('id="salutation"'));
+    expect(html.indexOf('src="/media/pictures/invite.jpg"')).toBeLessThan(html.indexOf('id="salutation"'));
+  });
+
+  it('uses default guest tokens on public registration without showing placeholders', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request('/en/rsvp/launch-night/invite/new'), env(publishedDb(placeholderTokenSeed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Welcome 貴賓');
+    expect(html).toContain('Hello Guest');
+    expect(html).not.toContain('{{');
+    expect(html).not.toContain('unknown_placeholder');
   });
 
   it('renders public registration when event and EDM refs are ids or slugs', async () => {

@@ -1,4 +1,4 @@
-import { blocks, localized, pointer, type CmsPage } from '@lionrockjs/worker-cms-plugin';
+import { blocks, localized, pointer, type CmsPage } from './cms';
 import { getPublishedPagesByType, type PublishedEnv } from './published';
 import { RSVP_LANGUAGES } from './rsvp';
 import { renderLiquid } from './templates/liquid';

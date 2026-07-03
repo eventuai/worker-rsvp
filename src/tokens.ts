@@ -6,7 +6,11 @@
 // obfuscated address) are omitted; keep the substitution semantics in sync.
 // ============================================================
 
-import { attr, localized, type CmsPage } from '@lionrockjs/worker-cms-plugin';
+import { attr, localized, type CmsPage } from './cms';
+
+const DEFAULT_NAME = 'Guest';
+const DEFAULT_ZH_HANT_NAME = '貴賓';
+const DEFAULT_ZH_HANS_NAME = '贵宾';
 
 export function guestTokens(guest: CmsPage): Record<string, string> {
   const language = attr(guest.lect, 'prefer_language');
@@ -45,18 +49,56 @@ export function guestTokens(guest: CmsPage): Record<string, string> {
   return tokens;
 }
 
+export function defaultGuestTokens(language = 'en'): Record<string, string> {
+  const tokens = guestTokens({
+    id: 0,
+    uuid: '',
+    page_type: 'guest',
+    name: DEFAULT_NAME,
+    slug: '',
+    weight: 0,
+    start: null,
+    end: null,
+    timezone: null,
+    page_id: null,
+    created_at: '',
+    updated_at: '',
+    lect: {
+      prefer_language: language,
+      name: { en: DEFAULT_NAME, 'zh-hant': DEFAULT_ZH_HANT_NAME, 'zh-hans': DEFAULT_ZH_HANS_NAME },
+      zh_hant_name: DEFAULT_ZH_HANT_NAME,
+      zh_hans_name: DEFAULT_ZH_HANS_NAME,
+      prefix: '',
+    },
+  });
+  tokens.name = DEFAULT_NAME;
+  tokens.en_name = DEFAULT_NAME;
+  tokens.zh_hant_name = DEFAULT_ZH_HANT_NAME;
+  tokens.zh_hans_name = DEFAULT_ZH_HANS_NAME;
+  tokens.salutation = '';
+  tokens.zh_hant_salutation = '';
+  tokens.zh_hans_salutation = '';
+  tokens.prefer_name = language.toLowerCase().startsWith('zh-hant')
+    ? DEFAULT_ZH_HANT_NAME
+    : language.toLowerCase().startsWith('zh-hans')
+      ? DEFAULT_ZH_HANS_NAME
+      : DEFAULT_NAME;
+  return tokens;
+}
+
 export function applyTemplateTokens(html: string, tokens: Record<string, string>): string {
   let result = html;
   for (const [key, value] of Object.entries(tokens)) {
-    result = result.replace(new RegExp(`{{@?${escapeRegExp(key)}}}`, 'gi'), () => value);
+    result = result.replace(new RegExp(`{{\\s*@?${escapeRegExp(key)}\\s*}}`, 'gi'), () => value);
   }
-  return result.replace(/{{@?([\w]+(?:\|\|[\w]+)+)}}/gi, (_match, keys: string) => {
+  result = result.replace(/{{\s*@?([\w]+(?:\s*\|\|\s*[\w]+)+)\s*}}/gi, (_match, keys: string) => {
     for (const key of keys.split('||').map((value) => value.trim())) {
       const value = tokens[key];
       if (value !== undefined && value !== '') return value;
     }
     return '';
   });
+  return result.replace(/{{\s*@?[\w]+(?:\s*\|\|\s*[\w]+)*\s*}}/gi, '');
 }
 
 export function safeHtml(value: string): string {

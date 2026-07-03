@@ -21,12 +21,12 @@
 // confirmation email) is an open decision — see cms-to-rsvp.md §9.2 B.1.
 // ============================================================
 
-import { CmsClient, attr, blocks, items, localized, pointer, type CmsPage } from '@lionrockjs/worker-cms-plugin';
+import { CmsClient, attr, blocks, items, localized, pointer, type CmsPage } from './cms';
 import { signPayload, verifyPayload } from './crypto';
 import { getPublishedPage, getPublishedPageBySlug, getPublishedPages, type PublishedEnv } from './published';
 import { qrSvg } from './qr';
 import { renderLiquid } from './templates/liquid';
-import { applyTemplateTokens, guestTokens, safeHtml } from './tokens';
+import { applyTemplateTokens, defaultGuestTokens, guestTokens, safeHtml } from './tokens';
 
 export interface RsvpEnv extends PublishedEnv {
   /** Copy of cms-plugin-events' PLUGIN_SECRET — verifies its signed links and authenticates the interim F1 write. */
@@ -276,7 +276,11 @@ async function publicRegistrationForm(
   language: string,
 ): Promise<string> {
   const edmLect = edm.lect ?? {};
-  const formBlocks = await formBlockVMs(env, edm, event, null, 0, language, (value) => value, { publicRegistration: true });
+  const tokens = defaultGuestTokens(language);
+  const personalize = (value: string): string => (value ? applyTemplateTokens(value, tokens) : value);
+  const formBlocks = await formBlockVMs(env, edm, event, null, 0, language, personalize, { publicRegistration: true });
+  const publicFormBlock = formBlocks.find((block) => block.type === 'rsvp-public-form') ?? null;
+  const edmBlocks = formBlocks.filter((block) => block.type !== 'rsvp-public-form');
   const meals = formBlocks.filter((block) => block.type === 'rsvp-meal-preferences');
 
   return renderLiquid(env.VIEWS, '/templates/public-rsvp.liquid', {
@@ -288,13 +292,14 @@ async function publicRegistrationForm(
     guestName: '',
     status: '',
     plusGuests: '0',
-    subject: localized(edmLect, 'subject', language),
-    heading: localized(edmLect, 'heading', language),
-    bodyHtml: safeHtml(localized(edmLect, 'body', language)),
+    subject: personalize(localized(edmLect, 'subject', language)),
+    heading: personalize(localized(edmLect, 'heading', language)),
+    bodyHtml: personalize(safeHtml(localized(edmLect, 'body', language))),
     acceptLabel: localized(edmLect, 'rsvp_form_button', language)
       || localized(edmLect, 'rsvp_button', language)
       || 'Register',
-    blocks: formBlocks,
+    blocks: edmBlocks,
+    publicFormBlock,
     meals,
     hasMeals: meals.length > 0,
     hideDecline: true,
@@ -334,7 +339,7 @@ async function formBlockVMs(
 
     switch (type) {
       case 'picture': {
-        const src = assetUrl(env.CMS_URL, attr(block, 'picture'));
+        const src = assetUrl(env.CMS_URL, localized(block, 'picture', language) || attr(block, 'picture'));
         if (src) {
           vms.push({
             type,
@@ -710,7 +715,10 @@ function previewGuest(): CmsPage {
     updated_at: '',
     lect: {
       name: { en: 'Guest' },
+      zh_hant_name: '貴賓',
+      zh_hans_name: '贵宾',
       salutation: '',
+      prefix: '',
       organization: '',
       job_title: '',
       plus_guests: '0',
@@ -775,6 +783,7 @@ function truthy(value: string): boolean {
 function assetUrl(base: string | undefined, value: string): string {
   const src = value.trim();
   if (!src) return '';
+  if (src.startsWith('/media/')) return src;
   if (/^(https?:)?\/\//i.test(src) || src.startsWith('data:')) return src;
   const origin = (base ?? '').replace(/\/+$/, '');
   return origin && src.startsWith('/') ? `${origin}${src}` : src;

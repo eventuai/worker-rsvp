@@ -12,10 +12,11 @@
 // ============================================================
 
 import { handleHome } from './home';
+import { handleMedia, type MediaEnv } from './media';
 import { handleRsvp, type RsvpEnv } from './rsvp';
 import { handleUnsubscribe } from './unsubscribe';
 
-interface Env extends RsvpEnv {
+interface Env extends RsvpEnv, MediaEnv {
   CF_VERSION_METADATA?: { id?: string };
 }
 
@@ -39,6 +40,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (url.pathname === '/healthz') {
     return Response.json({ ok: true, version: env.CF_VERSION_METADATA?.id ?? 'dev' });
   }
+
+  const media = await handleMedia(env, url);
+  if (media) return media;
 
   const home = await handleHome(env, url);
   if (home) return home;

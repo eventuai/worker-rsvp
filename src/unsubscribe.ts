@@ -9,7 +9,7 @@
 // rule as the RSVP form.
 // ============================================================
 
-import { CmsClient, attr, type CmsPage } from '@lionrockjs/worker-cms-plugin';
+import { CmsClient, attr, type CmsPage } from './cms';
 import { verifyPayload } from './crypto';
 import { getPublishedPage } from './published';
 import { renderLiquid } from './templates/liquid';

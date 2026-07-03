@@ -24,6 +24,10 @@ binding = "PUBLISHED_DB"
 database_name = "cms-published"
 database_id = "94cc01db-8028-48eb-923f-e440423aeb3f"
 
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "worker-cms-media"
+
 # RSVP links are minted and HMAC-signed by cms-plugin-events with ITS
 # PLUGIN_SECRET. Verifying them here (and performing the interim submit
 # write-back as that plugin) needs a COPY of that secret — same pattern as

@@ -9,7 +9,7 @@
 // GET path: a page that is not published is simply not visible.
 // ============================================================
 
-import type { CmsPage } from '@lionrockjs/worker-cms-plugin';
+import type { CmsPage } from './cms';
 
 export interface PublishedEnv {
   PUBLISHED_DB?: D1Database;
