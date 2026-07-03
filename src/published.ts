@@ -43,6 +43,15 @@ export async function getPublishedPage(db: D1Database, id: number): Promise<CmsP
   return row ? rowToPage(row) : null;
 }
 
+/** One published page by type + slug, used by public slug routes. */
+export async function getPublishedPageBySlug(db: D1Database, pageType: string, slug: string): Promise<CmsPage | null> {
+  const row = await db
+    .prepare(`SELECT ${PAGE_COLUMNS} FROM live_pages WHERE page_type = ? AND slug = ? LIMIT 1`)
+    .bind(pageType, slug)
+    .first<LivePageRow>();
+  return row ? rowToPage(row) : null;
+}
+
 /** Several published pages by id in one query. Missing ids are absent from the map. */
 export async function getPublishedPages(db: D1Database, ids: number[]): Promise<Map<number, CmsPage>> {
   const unique = [...new Set(ids)];

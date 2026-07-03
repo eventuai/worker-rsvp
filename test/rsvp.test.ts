@@ -41,6 +41,7 @@ interface SeedPage {
   id: number;
   page_type: string;
   name?: string;
+  slug?: string;
   page_id?: number | null;
   lect?: Record<string, unknown>;
 }
@@ -62,10 +63,12 @@ function publishedDb(pages: SeedPage[]): D1Database {
     lect: JSON.stringify(lect ?? {}),
   }));
   return {
-    prepare() {
+    prepare(sql: string) {
       return {
-        bind(...ids: unknown[]) {
-          const matched = rows.filter((row) => ids.includes(row.id));
+        bind(...values: unknown[]) {
+          const matched = sql.includes('page_type = ? AND slug = ?')
+            ? rows.filter((row) => row.page_type === values[0] && row.slug === values[1])
+            : rows.filter((row) => values.includes(row.id));
           return {
             async first() { return matched[0] ?? null; },
             async all() { return { results: matched }; },
@@ -100,6 +103,7 @@ function seed(overrides: { guestLect?: Record<string, unknown>; listLect?: Recor
       id: 7,
       page_type: 'event',
       name: 'Launch',
+      slug: 'launch-night',
       lect: {
         name: { en: 'Launch Night', 'zh-hant': '啟動之夜' },
         session: [
@@ -120,6 +124,7 @@ function seed(overrides: { guestLect?: Record<string, unknown>; listLect?: Recor
       id: 30,
       page_type: 'edm',
       name: 'Invite',
+      slug: 'invite',
       lect: {
         _pointers: { event: '7' },
         subject: { en: 'You are invited', 'zh-hant': '誠邀您出席' },
@@ -144,6 +149,20 @@ function seed(overrides: { guestLect?: Record<string, unknown>; listLect?: Recor
             custom_input: [
               { label: { en: 'Dietary Notes' }, type: 'textarea', required: 'no' },
               { label: { en: 'Shuttle Bus' }, type: 'select', default_value: 'yes:Yes please|no:No thanks' },
+            ],
+          },
+          {
+            _type: 'rsvp-public-form',
+            title: { en: 'Register' },
+            body: { en: '<p>Tell us who you are.</p>' },
+            label_salutation: { en: 'Title' },
+            label_first_name: { en: 'First name' },
+            label_last_name: { en: 'Last name' },
+            label_email: { en: 'Email' },
+            label_organization: { en: 'Company' },
+            label_job_title: { en: 'Role' },
+            custom_input: [
+              { name: 'source', label: { en: 'How did you hear about us?' }, type: 'text' },
             ],
           },
           { _type: 'rsvp-sessions', title: { en: 'Sessions' } },
@@ -244,6 +263,22 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).toContain('?edm=30"');
   });
 
+  it('renders a slug-based public registration form without touching the CMS', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request('/en/rsvp/launch-night/invite/new'), env(publishedDb(seed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Tell us who you are.');
+    expect(html).toContain('name="first_name"');
+    expect(html).toContain('name="email"');
+    expect(html).toContain('name="rsvp-public-source"');
+    expect(html).toContain('name="meal-1-food"');
+    expect(html).not.toContain('Scan at the door');
+    expect(html).not.toContain('Decline');
+  });
+
   it('renders the plain fallback form when no valid EDM resolves', async () => {
     noCmsFetch();
 
@@ -316,6 +351,71 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(updateBody).toMatchObject({ lect: { status: 'confirmed', plus_guests: '1' } });
     expect(updateHeaders?.get('x-plugin-id')).toBe('events');
     expect(updateHeaders?.get('x-plugin-secret')).toBe(SECRET);
+  });
+
+  it('registers a public slug-form submit as an adhoc guest', async () => {
+    let createBody: Record<string, unknown> | undefined;
+    let createHeaders: Headers | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+      if (url.pathname === '/__cms/pages' && init?.method === 'GET') {
+        expect(url.searchParams.get('page_type')).toBe('mail_list');
+        expect(url.searchParams.get('pointer_key')).toBe('event');
+        expect(url.searchParams.get('pointer_value')).toBe('7');
+        return Response.json({
+          pages: [{
+            id: 80,
+            page_type: 'mail_list',
+            name: 'Adhoc',
+            slug: 'adhoc',
+            page_id: null,
+            lect: { _pointers: { event: '7' } },
+          }],
+          total: 1,
+        });
+      }
+      if (url.pathname === '/__cms/pages' && init?.method === 'POST') {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        createHeaders = new Headers(init.headers);
+        return Response.json({ page: { id: 81 } });
+      }
+      return new Response('not found', { status: 404 });
+    }));
+
+    const response = await site.fetch(request('/en/rsvp/launch-night/invite/new', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        status: 'confirmed',
+        first_name: 'Grace',
+        last_name: 'Hopper',
+        email: 'grace@example.com',
+        organization: 'Navy',
+        job_title: 'Rear Admiral',
+        'rsvp-public-source': 'Friend',
+        'rsvp-plus-one-1:name': 'Ada',
+      }),
+    }), env(publishedDb(seed())));
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toContain('/en/rsvp/thank-you?status=confirmed');
+    expect(createBody).toMatchObject({
+      page_type: 'guest',
+      page_id: 80,
+      name: 'Grace Hopper',
+      lect: {
+        email: 'grace@example.com',
+        organization: 'Navy',
+        job_title: 'Rear Admiral',
+        plus_guests: '1',
+        status: 'confirmed',
+        type: 'adhoc',
+        _pointers: { event: '7', mail_list: '80' },
+        public_registration: { 'rsvp-public-source': 'Friend', 'rsvp-plus-one-1:name': 'Ada' },
+      },
+    });
+    expect(createHeaders?.get('x-plugin-id')).toBe('events');
+    expect(createHeaders?.get('x-plugin-secret')).toBe(SECRET);
   });
 });
 

@@ -23,7 +23,7 @@
 
 import { CmsClient, attr, blocks, items, localized, pointer, type CmsPage } from '@lionrockjs/worker-cms-plugin';
 import { signPayload, verifyPayload } from './crypto';
-import { getPublishedPage, getPublishedPages, type PublishedEnv } from './published';
+import { getPublishedPage, getPublishedPageBySlug, getPublishedPages, type PublishedEnv } from './published';
 import { qrSvg } from './qr';
 import { renderLiquid } from './templates/liquid';
 import { applyTemplateTokens, guestTokens, safeHtml } from './tokens';
@@ -52,6 +52,14 @@ export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Prom
   if (urlLanguage) path.shift();
   if (path[0] !== 'rsvp') return null;
   if (path[1] === 'thank-you') return thankYou(env.VIEWS, url.searchParams.get('status') ?? 'confirmed');
+  if (path[3] === 'new') {
+    return publicRegistration(request, env, url, {
+      eventSlug: path[1] ?? '',
+      edmSlug: path[2] ?? '',
+      language: urlLanguage || DEFAULT_LANGUAGE,
+      languagePrefix: urlLanguage ? `/${urlLanguage}` : '',
+    });
+  }
 
   const eventId = pageId(path[1]);
   const listId = pageId(path[2]);
@@ -158,6 +166,71 @@ async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<R
   return htmlResponse(html);
 }
 
+interface PublicRegistrationRoute {
+  eventSlug: string;
+  edmSlug: string;
+  language: string;
+  languagePrefix: string;
+}
+
+async function publicRegistration(
+  request: Request,
+  env: RsvpEnv,
+  url: URL,
+  route: PublicRegistrationRoute,
+): Promise<Response> {
+  if (!env.PUBLISHED_DB) return new Response('server misconfigured', { status: 500 });
+  const event = await getPublishedPageBySlug(env.PUBLISHED_DB, 'event', route.eventSlug);
+  const edm = await getPublishedPageBySlug(env.PUBLISHED_DB, 'edm', route.edmSlug);
+  if (!event || !edm || pointer(edm.lect, 'event') !== String(event.id)) return new Response('not found', { status: 404 });
+
+  if (request.method === 'POST') return submitPublicRegistration(request, env, url, event, route.languagePrefix);
+
+  const html = await publicRegistrationForm(env, url, event, edm, route.language);
+  return htmlResponse(html);
+}
+
+async function publicRegistrationForm(
+  env: RsvpEnv,
+  url: URL,
+  event: CmsPage,
+  edm: CmsPage,
+  language: string,
+): Promise<string> {
+  const edmLect = edm.lect ?? {};
+  const formBlocks = await formBlockVMs(env, edm, event, null, 0, language, (value) => value, { publicRegistration: true });
+  const meals = formBlocks.filter((block) => block.type === 'rsvp-meal-preferences');
+
+  return renderLiquid(env.VIEWS, '/templates/public-rsvp.liquid', {
+    language,
+    action: url.pathname,
+    hasEdm: true,
+    eventName: localized(event.lect, 'name', language) || event.name,
+    listName: '',
+    guestName: '',
+    status: '',
+    plusGuests: '0',
+    subject: localized(edmLect, 'subject', language),
+    heading: localized(edmLect, 'heading', language),
+    bodyHtml: safeHtml(localized(edmLect, 'body', language)),
+    acceptLabel: localized(edmLect, 'rsvp_form_button', language)
+      || localized(edmLect, 'rsvp_button', language)
+      || 'Register',
+    blocks: formBlocks,
+    meals,
+    hasMeals: meals.length > 0,
+    hideDecline: true,
+    languages: RSVP_LANGUAGES
+      .filter((code) => code !== 'mis')
+      .map((code) => ({
+        code,
+        label: code === 'zh-hant' ? '繁體中文' : code === 'zh-hans' ? '简体中文' : 'English',
+        href: `/${code}${stripLanguagePrefix(url.pathname)}`,
+        active: code === language,
+      })),
+  });
+}
+
 function stripLanguagePrefix(pathname: string): string {
   const segments = pathname.split('/').filter(Boolean);
   if (RSVP_LANGUAGES.includes(segments[0])) segments.shift();
@@ -173,10 +246,11 @@ async function formBlockVMs(
   env: RsvpEnv,
   edm: CmsPage,
   event: CmsPage,
-  guest: CmsPage,
+  guest: CmsPage | null,
   listId: number,
   language: string,
   personalize: (value: string) => string,
+  options: { publicRegistration?: boolean } = {},
 ): Promise<Array<Record<string, unknown>>> {
   const vms: Array<Record<string, unknown>> = [];
   for (const [index, block] of blocks(edm.lect).entries()) {
@@ -251,6 +325,22 @@ async function formBlockVMs(
       case 'rsvp-custom':
         vms.push({ type, title, bodyHtml, inputs: customInputVMs(block, 'custom_input', 'rsvp-custom-', language) });
         break;
+      case 'rsvp-public-form':
+        if (options.publicRegistration) {
+          vms.push({
+            type,
+            title,
+            bodyHtml,
+            salutationLabel: localized(block, 'label_salutation', language) || 'Salutation',
+            firstNameLabel: localized(block, 'label_first_name', language) || 'First name',
+            lastNameLabel: localized(block, 'label_last_name', language) || 'Last name',
+            emailLabel: localized(block, 'label_email', language) || 'Email',
+            organizationLabel: localized(block, 'label_organization', language) || 'Organization',
+            jobTitleLabel: localized(block, 'label_job_title', language) || 'Job title',
+            inputs: customInputVMs(block, 'custom_input', 'rsvp-public-', language),
+          });
+        }
+        break;
       case 'rsvp-travel-hotel':
         vms.push({
           type,
@@ -289,6 +379,7 @@ async function formBlockVMs(
         });
         break;
       case 'rsvp-qrcode': {
+        if (options.publicRegistration || !guest) break;
         // Same signed check-in payload the events plugin's admin guest-QR view
         // mints, resolved by cms-plugin-checkin's /checkin/… routes.
         const token = `${listId}.${guest.id}`;
@@ -336,10 +427,11 @@ function customInputVMs(
   return items(block, itemsKey)
     .map((input) => {
       const label = localized(input, 'label', language);
+      const name = attr(input, 'name') || slug(label);
       const type = attr(input, 'type') || 'text';
       const defaultValue = attr(input, 'default_value') || localized(input, 'default_value', language);
       return {
-        name: `${prefix}${slug(label)}`,
+        name: `${prefix}${slug(name)}`,
         label,
         type,
         required: truthy(attr(input, 'required')),
@@ -414,6 +506,88 @@ async function submitRsvp(
     },
   });
   return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status });
+}
+
+async function submitPublicRegistration(
+  request: Request,
+  env: RsvpEnv,
+  url: URL,
+  event: CmsPage,
+  languagePrefix: string,
+): Promise<Response> {
+  const form = await request.formData();
+  const status = String(form.get('status') ?? 'confirmed').trim().toLowerCase();
+  if (status && status !== 'confirmed') return new Response('Choose a response', { status: 400 });
+
+  const firstName = formText(form, 'first_name');
+  const lastName = formText(form, 'last_name');
+  const name = [firstName, lastName].filter(Boolean).join(' ').trim();
+  const email = formText(form, 'email');
+  if (!name || !email) return new Response('Name and email are required', { status: 400 });
+
+  const namedPlusGuests = [...form.entries()]
+    .filter(([field, value]) => /^rsvp-plus-one-\d+:name$/.test(field) && String(value).trim() !== '')
+    .length;
+  const now = new Date().toISOString();
+  const cms = cmsClient(env);
+  const list = await ensureAdhocGuestList(cms, event);
+  await cms.create({
+    page_type: 'guest',
+    page_id: list.id,
+    name,
+    lect: {
+      _type: 'guest',
+      salutation: formText(form, 'salutation'),
+      name: { en: name },
+      first_name: { en: firstName },
+      last_name: { en: lastName },
+      email,
+      organization: formText(form, 'organization'),
+      job_title: formText(form, 'job_title'),
+      plus_guests: String(namedPlusGuests),
+      status: 'confirmed',
+      type: 'adhoc',
+      _pointers: { event: String(event.id), mail_list: String(list.id) },
+      response: [{ status: 'confirmed', date: now, message: 'public registration' }],
+      public_registration: publicRegistrationAnswers(form),
+    },
+  });
+
+  return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status: 'confirmed' });
+}
+
+async function ensureAdhocGuestList(cms: CmsClient, event: CmsPage): Promise<CmsPage> {
+  const { pages } = await cms.list('mail_list', { pointer: { key: 'event', value: event.id }, limit: 500 });
+  const existing = pages.find((page) => page.name.trim().toLowerCase() === 'adhoc');
+  if (existing) return existing;
+  return cms.create({
+    page_type: 'mail_list',
+    name: 'Adhoc',
+    lect: { _type: 'mail_list', name: { en: 'Adhoc' }, _pointers: { event: String(event.id) } },
+  });
+}
+
+function cmsClient(env: RsvpEnv): CmsClient {
+  return new CmsClient({
+    cmsUrl: env.CMS_URL,
+    pluginSecret: env.EVENTS_PLUGIN_SECRET,
+    pluginId: EVENTS_PLUGIN_ID,
+    fetcher: (input, init) => globalThis.fetch(input, init),
+  });
+}
+
+function publicRegistrationAnswers(form: FormData): Record<string, string> {
+  const answers: Record<string, string> = {};
+  for (const [key, value] of form.entries()) {
+    if (key.startsWith('rsvp-public-') || key.startsWith('rsvp-custom-') || key.startsWith('rsvp-travel-hotel-') || key.startsWith('rsvp-pickup-') || key.startsWith('rsvp-plus-one-') || key.startsWith('meal-') || key.startsWith('session-')) {
+      answers[key] = String(value);
+    }
+  }
+  return answers;
+}
+
+function formText(form: FormData, key: string): string {
+  return String(form.get(key) ?? '').trim();
 }
 
 // ── Thank-you ──────────────────────────────────────────────────────────────────

@@ -73,6 +73,7 @@ button{border:0;border-radius:.5rem;padding:.7rem 1.2rem;font:inherit;font-weigh
           {% when 'rsvp-pickup' %}{% render 'public/rsvp-pickup', block: block %}
           {% when 'rsvp-sessions' %}{% render 'public/rsvp-sessions', block: block %}
           {% when 'rsvp-qrcode' %}{% render 'public/rsvp-qrcode', block: block %}
+          {% when 'rsvp-public-form' %}{% render 'public/rsvp-public-form', block: block %}
         {% endcase %}
       {% endfor %}
       <div class="required-note">* required</div>
@@ -85,7 +86,9 @@ button{border:0;border-radius:.5rem;padding:.7rem 1.2rem;font:inherit;font-weigh
 
     <div class="actions">
       <button class="yes" name="status" value="confirmed" type="submit">{{ acceptLabel | default: 'Accept' | escape }}</button>
+      {% unless hideDecline %}
       <button class="no" name="status" value="declined" type="submit">Decline</button>
+      {% endunless %}
     </div>
   </form>
 </main>
