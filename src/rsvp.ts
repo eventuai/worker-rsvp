@@ -15,13 +15,22 @@
 // Without a valid EDM the plain status/plus-guests fallback form renders
 // instead, so pre-EDM links keep working.
 //
-// INTERIM response storage: submits update the draft guest page through the F1
-// API (status, plus_guests, response log), authenticated as the events plugin.
-// How RSVP responses should really be stored (full answers, self-registration,
-// confirmation email) is an open decision — see cms-to-rsvp.md §9.2 B.1.
+// Response storage (decided 2026-07-07, cms-to-rsvp.md §9.2 B.1): submits and
+// self-registrations are stored as INSERT-only rows in the published D1
+// (rsvp_response / rsvp_registration — see src/submissions.ts for the
+// ownership contract that keeps CMS republishes from ever overwriting them).
+// worker-cms ingests the rows into its draft DB on a cron and fires create
+// hooks; cms-plugin-events applies responses to guest pages from there. This
+// Worker no longer writes to the CMS on the submit path at all.
 // ============================================================
 
-import { CmsClient, attr, blocks, items, localized, pointer, type CmsPage } from './cms';
+import { attr, blocks, items, localized, pointer, type CmsPage } from './cms';
+import {
+  collectAnswers,
+  insertRegistration,
+  insertResponse,
+  latestResponse,
+} from './submissions';
 import { signPayload, verifyPayload } from './crypto';
 import { getPublishedPage, getPublishedPageBySlug, getPublishedPages, type PublishedEnv } from './published';
 import { qrSvg } from './qr';
@@ -29,17 +38,14 @@ import { renderLiquid } from './templates/liquid';
 import { applyTemplateTokens, defaultGuestTokens, guestTokens, safeHtml } from './tokens';
 
 export interface RsvpEnv extends PublishedEnv {
-  /** Copy of cms-plugin-events' PLUGIN_SECRET — verifies its signed links and authenticates the interim F1 write. */
+  /** Copy of cms-plugin-events' PLUGIN_SECRET — verifies its signed RSVP/unsubscribe links. */
   EVENTS_PLUGIN_SECRET?: string;
-  /** Base URL of the CMS Worker, for the interim submit write-back only. */
+  /** Base URL of the CMS Worker — used only by the unsubscribe write-back (src/unsubscribe.ts). */
   CMS_URL?: string;
   /** Public origin serving /checkin/… QR links (cms-plugin-checkin). */
   CHECKIN_BASE_URL?: string;
   VIEWS: Fetcher;
 }
-
-/** Plugin id the interim F1 write authenticates as (the secret is that plugin's). */
-const EVENTS_PLUGIN_ID = 'events';
 
 export const RSVP_LANGUAGES = ['mis', 'en', 'zh-hant', 'zh-hans'];
 
@@ -84,7 +90,7 @@ export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Prom
   const payload = `rsvp:${eventId}:${listId}:${guestId}`;
   if (!(await verifyPayload(env.EVENTS_PLUGIN_SECRET, payload, signature))) return new Response('not found', { status: 404 });
 
-  // Published data only — no draft/F1 reads on the public GET path.
+  // Published data only — no draft/Plugin API reads on the public GET path.
   if (!env.PUBLISHED_DB) return new Response('server misconfigured', { status: 500 });
   const pages = await getPublishedPages(env.PUBLISHED_DB, [eventId, listId, guestId]);
   const event = pages.get(eventId);
@@ -98,13 +104,14 @@ export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Prom
   const language = urlLanguage || (RSVP_LANGUAGES.includes(preferred) ? preferred : '') || DEFAULT_LANGUAGE;
   const languagePrefix = urlLanguage ? `/${urlLanguage}` : '';
 
-  if (request.method === 'POST') return submitRsvp(request, env, url, guest, languagePrefix);
+  if (request.method === 'POST') return submitRsvp(request, env, url, guest, eventId, listId, language, languagePrefix);
 
   // Already responded → straight to thank-you, unless the list allows refills.
-  const responses = realResponses(guest);
-  if (responses.length && !allowRefill(guest)) {
-    const latest = String(responses[responses.length - 1].status ?? 'confirmed');
-    return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status: latest });
+  // Response rows are the source of truth (the published guest row only picks
+  // up a response after ingest + republish); the guest lect is the fallback.
+  const responded = await respondedStatus(env.PUBLISHED_DB, guest);
+  if (responded && !allowRefill(guest)) {
+    return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status: responded });
   }
 
   const edm = await resolveEdm(env.PUBLISHED_DB, url, list, eventId);
@@ -262,7 +269,7 @@ async function publicRegistration(
   ]);
   if (!event || !edm || !edmBelongsToEvent(edm, event.id)) return new Response('not found', { status: 404 });
 
-  if (request.method === 'POST') return submitPublicRegistration(request, env, url, event, route.languagePrefix);
+  if (request.method === 'POST') return submitPublicRegistration(request, env, url, event, edm, route.language, route.languagePrefix);
 
   const html = await publicRegistrationForm(env, url, event, edm, route.language);
   return htmlResponse(html);
@@ -564,21 +571,27 @@ function slug(label: string): string {
   return label.toLowerCase().replace(/[/()]/g, '').replace(/\s+/g, '-');
 }
 
-// ── Submit (INTERIM storage — see header note) ─────────────────────────────────
+// ── Submit (published-DB rows — see header note) ──────────────────────────────
 
 async function submitRsvp(
   request: Request,
   env: RsvpEnv,
   url: URL,
   guest: CmsPage,
+  eventId: number,
+  listId: number,
+  language: string,
   languagePrefix: string,
 ): Promise<Response> {
   const form = await request.formData();
   const status = String(form.get('status') ?? '').trim().toLowerCase();
   if (!RESPONSES.has(status)) return new Response('Choose a response', { status: 400 });
+  // Honeypot filled → a bot. Pretend success, store nothing.
+  if (honeypotFilled(form)) return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status });
 
-  if (realResponses(guest).length && !allowRefill(guest)) {
-    return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status });
+  const responded = await respondedStatus(env.PUBLISHED_DB!, guest);
+  if (responded && !allowRefill(guest)) {
+    return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status: responded });
   }
 
   // Plus guests: the explicit count field (fallback form), else the number of
@@ -590,40 +603,56 @@ async function submitRsvp(
   const plusGuests = Math.max(0, Number(plusGuestValue));
   const message = String(form.get('message') ?? '').trim();
 
-  // INTERIM: update the draft guest via F1, authenticated as the events plugin
-  // (status + count + response log only). Full answer storage (meals, travel,
-  // custom fields, …) is the open decision in cms-to-rsvp.md §9.2 B.1 — the
-  // field values are collected but not yet kept.
-  const cms = new CmsClient({
-    cmsUrl: env.CMS_URL,
-    pluginSecret: env.EVENTS_PLUGIN_SECRET,
-    pluginId: EVENTS_PLUGIN_ID,
-    fetcher: (input, init) => globalThis.fetch(input, init),
-  });
-  await cms.update(guest.id, {
-    lect: {
-      status,
-      plus_guests: String(Number.isFinite(plusGuests) ? plusGuests : 0),
-      response: [...items(guest.lect, 'response'), {
-        status,
-        date: new Date().toISOString(),
-        message,
-      }],
-    },
+  await insertResponse(env.PUBLISHED_DB!, {
+    guest,
+    eventId,
+    listId,
+    edmId: pageId(url.searchParams.get('edm')),
+    status,
+    plusGuests: Number.isFinite(plusGuests) ? plusGuests : 0,
+    message,
+    language,
+    answers: collectAnswers(form),
   });
   return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status });
 }
 
+/**
+ * Latest response status for a guest, or null when they have not responded.
+ * Reads the rsvp_response rows this Worker writes (authoritative), falling
+ * back to the response log in the published guest lect (pre-cutover data, or
+ * a response that already made the round trip through ingest + republish).
+ */
+async function respondedStatus(db: D1Database, guest: CmsPage): Promise<string | null> {
+  const latest = await latestResponse(db, guest.id);
+  if (latest) return String(latest.status ?? 'confirmed');
+  const responses = realResponses(guest);
+  if (responses.length) return String(responses[responses.length - 1].status ?? 'confirmed');
+  return null;
+}
+
+/** Classic honeypot: a visually hidden "website" input real visitors never fill. */
+function honeypotFilled(form: FormData): boolean {
+  return String(form.get('website') ?? '').trim() !== '';
+}
+
+// Self-registrations land as rsvp_registration rows — NO CMS call from this
+// public, unauthenticated path (a bot can no longer create draft guest pages).
+// The events plugin's admin review converts rows into real guests (dedupe by
+// email + registration uuid) or discards them.
 async function submitPublicRegistration(
   request: Request,
   env: RsvpEnv,
   url: URL,
   event: CmsPage,
+  edm: CmsPage,
+  language: string,
   languagePrefix: string,
 ): Promise<Response> {
   const form = await request.formData();
   const status = String(form.get('status') ?? 'confirmed').trim().toLowerCase();
   if (status && status !== 'confirmed') return new Response('Choose a response', { status: 400 });
+  if (honeypotFilled(form)) return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status: 'confirmed' });
 
   const firstName = formText(form, 'first_name');
   const lastName = formText(form, 'last_name');
@@ -636,63 +665,24 @@ async function submitPublicRegistration(
   const namedPlusGuests = [...form.entries()]
     .filter(([field, value]) => /^rsvp-plus-one-\d+:name$/.test(field) && String(value).trim() !== '')
     .length;
-  const now = new Date().toISOString();
-  const cms = cmsClient(env);
-  const list = await ensureAdhocGuestList(cms, event);
-  await cms.create({
-    page_type: 'guest',
-    page_id: list.id,
-    name,
-    lect: {
-      _type: 'guest',
-      prefix: salutation,
-      salutation,
-      name: { en: name },
-      first_name: { en: firstName },
-      last_name: { en: lastName },
+  await insertRegistration(env.PUBLISHED_DB!, {
+    event,
+    edmId: edm.id,
+    fields: {
+      name,
+      firstName,
+      lastName,
       email,
+      salutation,
       organization,
-      job_title: formText(form, 'job_title'),
-      plus_guests: String(namedPlusGuests),
-      status: 'confirmed',
-      type: 'adhoc',
-      _pointers: { event: String(event.id), mail_list: String(list.id) },
-      response: [{ status: 'confirmed', date: now, message: 'public registration' }],
-      public_registration: publicRegistrationAnswers(form),
+      jobTitle: formText(form, 'job_title'),
+      plusGuests: namedPlusGuests,
     },
+    language,
+    answers: collectAnswers(form),
   });
 
   return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status: 'confirmed' });
-}
-
-async function ensureAdhocGuestList(cms: CmsClient, event: CmsPage): Promise<CmsPage> {
-  const { pages } = await cms.list('mail_list', { pointer: { key: 'event', value: event.id }, limit: 500 });
-  const existing = pages.find((page) => page.name.trim().toLowerCase() === 'adhoc');
-  if (existing) return existing;
-  return cms.create({
-    page_type: 'mail_list',
-    name: 'Adhoc',
-    lect: { _type: 'mail_list', name: { en: 'Adhoc' }, _pointers: { event: String(event.id) } },
-  });
-}
-
-function cmsClient(env: RsvpEnv): CmsClient {
-  return new CmsClient({
-    cmsUrl: env.CMS_URL,
-    pluginSecret: env.EVENTS_PLUGIN_SECRET,
-    pluginId: EVENTS_PLUGIN_ID,
-    fetcher: (input, init) => globalThis.fetch(input, init),
-  });
-}
-
-function publicRegistrationAnswers(form: FormData): Record<string, string> {
-  const answers: Record<string, string> = {};
-  for (const [key, value] of form.entries()) {
-    if (key.startsWith('rsvp-public-') || key.startsWith('rsvp-custom-') || key.startsWith('rsvp-travel-hotel-') || key.startsWith('rsvp-pickup-') || key.startsWith('rsvp-plus-one-') || key.startsWith('meal-') || key.startsWith('session-')) {
-      answers[key] = String(value);
-    }
-  }
-  return answers;
 }
 
 function formText(form: FormData, key: string): string {

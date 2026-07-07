@@ -2,7 +2,7 @@
 // Public RSVP form — EDM-block-driven, multilingual, published-data-only.
 //
 // Drives the Worker directly with a fake PUBLISHED_DB (the published D1's
-// `live_pages`) and a global fetch stub standing in for the F1 API. GET
+// `live_pages`) and a global fetch stub standing in for the Plugin API. GET
 // requests must be satisfied ENTIRELY from the published DB; only the POST
 // submit may call the CMS (interim draft update, authenticated as the events
 // plugin).
@@ -47,8 +47,24 @@ interface SeedPage {
   lect?: Record<string, unknown>;
 }
 
-/** Fake published D1: answers the parameterized SELECTs in src/published.ts. */
-function publishedDb(pages: SeedPage[]): D1Database {
+/** A live_pages INSERT recorded by the fake DB, decoded from src/submissions.ts bind order. */
+interface RecordedInsert {
+  id: number;
+  name: string;
+  slug: string;
+  page_type: string;
+  lect: Record<string, unknown>;
+  page_id: number | null;
+}
+
+type FakePublishedDb = D1Database & { inserts: RecordedInsert[] };
+
+/**
+ * Fake published D1: answers the parameterized SELECTs in src/published.ts,
+ * records the insert-only submission writes from src/submissions.ts, and
+ * serves them back to the latest-response lookup.
+ */
+function publishedDb(pages: SeedPage[]): FakePublishedDb {
   const rows = pages.map(({ lect, ...page }) => ({
     uuid: `uuid-${page.id}`,
     created_at: '2026-01-01',
@@ -63,10 +79,37 @@ function publishedDb(pages: SeedPage[]): D1Database {
     ...page,
     lect: JSON.stringify(lect ?? {}),
   }));
+  const inserts: RecordedInsert[] = [];
   return {
+    inserts,
     prepare(sql: string) {
       return {
         bind(...values: unknown[]) {
+          if (sql.trimStart().startsWith('INSERT INTO live_pages')) {
+            return {
+              async run() {
+                // Bind order in insertSubmission: id, name, slug, page_type, lect, page_id.
+                inserts.push({
+                  id: values[0] as number,
+                  name: values[1] as string,
+                  slug: values[2] as string,
+                  page_type: values[3] as string,
+                  lect: JSON.parse(values[4] as string) as Record<string, unknown>,
+                  page_id: values[5] as number | null,
+                });
+                return {};
+              },
+            };
+          }
+          if (sql.includes('page_type = ? AND page_id = ?')) {
+            // latestResponse: newest submission row for a guest.
+            const matched = inserts.filter((row) => row.page_type === values[0] && row.page_id === values[1]);
+            const newest = matched[matched.length - 1] ?? null;
+            return {
+              async first() { return newest ? { lect: JSON.stringify(newest.lect) } : null; },
+              async all() { return { results: matched.map((row) => ({ lect: JSON.stringify(row.lect) })) }; },
+            };
+          }
           const matched = sql.includes('page_type = ? AND slug = ?')
             ? rows.filter((row) => row.page_type === values[0] && row.slug === values[1])
             : sql.includes('WHERE page_type = ?')
@@ -79,7 +122,7 @@ function publishedDb(pages: SeedPage[]): D1Database {
         },
       };
     },
-  } as unknown as D1Database;
+  } as unknown as FakePublishedDb;
 }
 
 const SECRET = 'events-secret';
@@ -532,18 +575,9 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(refillable.status).toBe(200);
   });
 
-  it('submits via the F1 API as the events plugin, counting named plus guests', async () => {
-    let updateBody: Record<string, unknown> | undefined;
-    let updateHeaders: Headers | undefined;
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
-      if (url.pathname === '/__cms/pages/9' && init?.method === 'PUT') {
-        updateBody = JSON.parse(String(init.body)) as Record<string, unknown>;
-        updateHeaders = new Headers(init.headers);
-        return Response.json({ page: { id: 9 } });
-      }
-      return new Response('not found', { status: 404 });
-    }));
+  it('stores the response as an rsvp_response row with full answers, never calling the CMS', async () => {
+    noCmsFetch();
+    const db = publishedDb(seed());
 
     const response = await site.fetch(request(await signedPath(), {
       method: 'POST',
@@ -555,43 +589,72 @@ describe('public RSVP form (EDM-driven, published data)', () => {
         'rsvp-plus-one-2:name': '',
         'meal-1-food': 'Chicken',
       }),
-    }), env(publishedDb(seed())));
+    }), env(db));
 
     expect(response.status).toBe(303);
     expect(response.headers.get('location')).toContain('/rsvp/thank-you?status=confirmed');
-    expect(updateBody).toMatchObject({ lect: { status: 'confirmed', plus_guests: '1' } });
-    expect(updateHeaders?.get('x-plugin-id')).toBe('events');
-    expect(updateHeaders?.get('x-plugin-secret')).toBe(SECRET);
+    expect(db.inserts.length).toBe(1);
+
+    const row = db.inserts[0];
+    expect(row.page_type).toBe('rsvp_response');
+    expect(row.id).toBeLessThan(0); // negative ids never collide with CMS page ids
+    expect(row.page_id).toBe(9); // points at the guest
+    expect(row.lect).toMatchObject({
+      _type: 'rsvp_response',
+      status: 'confirmed',
+      plus_guests: '1', // named companions counted
+      event_id: '7',
+      list_id: '8',
+      answers: {
+        'rsvp-plus-one-1:name': 'Grace Hopper',
+        'rsvp-plus-one-1:organization': 'Navy',
+        'meal-1-food': 'Chicken',
+      },
+    });
   });
 
-  it('registers a public slug-form submit as an adhoc guest', async () => {
-    let createBody: Record<string, unknown> | undefined;
-    let createHeaders: Headers | undefined;
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
-      if (url.pathname === '/__cms/pages' && init?.method === 'GET') {
-        expect(url.searchParams.get('page_type')).toBe('mail_list');
-        expect(url.searchParams.get('pointer_key')).toBe('event');
-        expect(url.searchParams.get('pointer_value')).toBe('7');
-        return Response.json({
-          pages: [{
-            id: 80,
-            page_type: 'mail_list',
-            name: 'Adhoc',
-            slug: 'adhoc',
-            page_id: null,
-            lect: { _pointers: { event: '7' } },
-          }],
-          total: 1,
-        });
-      }
-      if (url.pathname === '/__cms/pages' && init?.method === 'POST') {
-        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
-        createHeaders = new Headers(init.headers);
-        return Response.json({ page: { id: 81 } });
-      }
-      return new Response('not found', { status: 404 });
-    }));
+  it('treats a stored response row as responded: re-GET redirects, re-POST does not double-insert', async () => {
+    noCmsFetch();
+    const db = publishedDb(seed());
+    const path = await signedPath();
+    const submit = (): Promise<Response> => site.fetch(request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ status: 'declined' }),
+    }), env(db));
+
+    await submit();
+    expect(db.inserts.length).toBe(1);
+
+    // The response row alone (guest lect untouched) blocks the form…
+    const again = await site.fetch(request(path), env(db));
+    expect(again.status).toBe(303);
+    expect(again.headers.get('location')).toContain('/rsvp/thank-you?status=declined');
+
+    // …and a repeat submit without allow_refill stores nothing new.
+    const resubmit = await submit();
+    expect(resubmit.status).toBe(303);
+    expect(db.inserts.length).toBe(1);
+  });
+
+  it('drops a honeypot-filled submit without storing anything', async () => {
+    noCmsFetch();
+    const db = publishedDb(seed());
+
+    const response = await site.fetch(request(await signedPath(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ status: 'confirmed', website: 'https://spam.example' }),
+    }), env(db));
+
+    expect(response.status).toBe(303); // bots still see the thank-you redirect
+    expect(response.headers.get('location')).toContain('/rsvp/thank-you');
+    expect(db.inserts.length).toBe(0);
+  });
+
+  it('stores a public slug-form submit as an rsvp_registration row, never calling the CMS', async () => {
+    noCmsFetch();
+    const db = publishedDb(seed());
 
     const response = await site.fetch(request('/en/rsvp/launch-night/invite/new', {
       method: 'POST',
@@ -607,29 +670,50 @@ describe('public RSVP form (EDM-driven, published data)', () => {
         'rsvp-public-source': 'Friend',
         'rsvp-plus-one-1:name': 'Ada',
       }),
-    }), env(publishedDb(seed())));
+    }), env(db));
 
     expect(response.status).toBe(303);
     expect(response.headers.get('location')).toContain('/en/rsvp/thank-you?status=confirmed');
-    expect(createBody).toMatchObject({
-      page_type: 'guest',
-      page_id: 80,
+    expect(db.inserts.length).toBe(1);
+
+    const row = db.inserts[0];
+    expect(row.page_type).toBe('rsvp_registration');
+    expect(row.id).toBeLessThan(0);
+    expect(row.page_id).toBe(7); // points at the event
+    expect(row.name).toBe('Grace Hopper');
+    expect(row.lect).toMatchObject({
+      _type: 'rsvp_registration',
+      event_id: '7',
       name: 'Grace Hopper',
-      lect: {
-        prefix: 'dr',
-        salutation: 'dr',
-        email: 'grace@example.com',
-        organization: 'Navy',
-        job_title: 'Rear Admiral',
-        plus_guests: '1',
-        status: 'confirmed',
-        type: 'adhoc',
-        _pointers: { event: '7', mail_list: '80' },
-        public_registration: { 'rsvp-public-source': 'Friend', 'rsvp-plus-one-1:name': 'Ada' },
-      },
+      first_name: 'Grace',
+      last_name: 'Hopper',
+      email: 'grace@example.com',
+      salutation: 'dr',
+      organization: 'Navy',
+      job_title: 'Rear Admiral',
+      plus_guests: '1',
+      language: 'en',
+      answers: { 'rsvp-public-source': 'Friend', 'rsvp-plus-one-1:name': 'Ada' },
     });
-    expect(createHeaders?.get('x-plugin-id')).toBe('events');
-    expect(createHeaders?.get('x-plugin-secret')).toBe(SECRET);
+  });
+
+  it('drops a honeypot-filled registration without storing anything', async () => {
+    noCmsFetch();
+    const db = publishedDb(seed());
+
+    const response = await site.fetch(request('/en/rsvp/launch-night/invite/new', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        first_name: 'Bot',
+        last_name: 'McBot',
+        email: 'bot@spam.example',
+        website: 'https://spam.example',
+      }),
+    }), env(db));
+
+    expect(response.status).toBe(303);
+    expect(db.inserts.length).toBe(0);
   });
 });
 
@@ -656,7 +740,7 @@ describe('EDM unsubscribe', () => {
     expect(response.status).toBe(404);
   });
 
-  it('sets not_send over F1 on confirm', async () => {
+  it('sets not_send over the Plugin API on confirm', async () => {
     let updateBody: Record<string, unknown> | undefined;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);

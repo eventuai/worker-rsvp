@@ -3,10 +3,12 @@
 //
 // The public RSVP form reads the SAME D1 database the CMS publishes to
 // (`cms-published` → `live_pages`), bound here as PUBLISHED_DB. This module
-// only ever issues parameterized SELECTs — no INSERT/UPDATE/DELETE — so the
-// binding is read-only by construction; the schema is owned and migrated by
-// worker-cms. Draft pages (and the F1 API) are never touched on the public
-// GET path: a page that is not published is simply not visible.
+// only ever issues parameterized SELECTs; the schema is owned and migrated by
+// worker-cms. The binding's only writes live in src/submissions.ts —
+// insert-only rsvp_response / rsvp_registration rows with negative ids, per
+// the ownership contract in worker-cms src/publish/README.md. Draft pages
+// (and the Plugin API) are never touched on the public GET path: a page that
+// is not published is simply not visible.
 // ============================================================
 
 import type { CmsPage } from './cms';

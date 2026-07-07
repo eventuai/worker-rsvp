@@ -4,7 +4,7 @@
 // The link is minted per recipient by cms-plugin-events (signature over
 // `unsub:listId:guestId` with its PLUGIN_SECRET, verified here with the
 // EVENTS_PLUGIN_SECRET copy). GET shows a confirm page; POST sets the guest's
-// `not_send` flag over F1 (the events plugin's send flows already skip
+// `not_send` flag over the Plugin API (the events plugin's send flows already skip
 // not_send guests). The guest is read from the published DB — same visibility
 // rule as the RSVP form.
 // ============================================================

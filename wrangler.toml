@@ -13,12 +13,16 @@ run_worker_first = true
 [version_metadata]
 binding = "CF_VERSION_METADATA"
 
-# ── Published content (read-only) ─────────────────────────────────────────────
+# ── Published content ─────────────────────────────────────────────────────────
 # The SAME database worker-cms publishes to (its PUBLISHED_DB / "cms-published",
-# also bound by worker-web). The RSVP form only ever issues SELECTs against it
-# (src/published.ts); the schema is OWNED by worker-cms (cms/migrations/published)
-# — deliberately no `migrations_dir` here so this Worker can never mutate or
-# re-migrate the shared database.
+# also bound by worker-web). Reads are parameterized SELECTs (src/published.ts).
+# The ONLY writes are insert-only rsvp_response / rsvp_registration rows with
+# negative ids (src/submissions.ts) — never UPDATE/DELETE, never rows the CMS
+# minted — so a CMS republish can never overwrite a submission and vice versa
+# (contract: worker-cms src/publish/README.md; worker-cms ingests the rows into
+# its draft DB on a cron). The schema is OWNED by worker-cms
+# (cms/migrations/published) — deliberately no `migrations_dir` here so this
+# Worker can never re-migrate the shared database.
 [[d1_databases]]
 binding = "PUBLISHED_DB"
 database_name = "cms-published"
@@ -29,15 +33,15 @@ binding = "MEDIA_BUCKET"
 bucket_name = "worker-cms-media"
 
 # RSVP links are minted and HMAC-signed by cms-plugin-events with ITS
-# PLUGIN_SECRET. Verifying them here (and performing the interim submit
-# write-back as that plugin) needs a COPY of that secret — same pattern as
-# cms-plugin-checkin's EVENTS_PLUGIN_SECRET:
+# PLUGIN_SECRET. Verifying them here (and the unsubscribe write-back as that
+# plugin) needs a COPY of that secret — same pattern as cms-plugin-checkin's
+# EVENTS_PLUGIN_SECRET:
 #   wrangler secret put EVENTS_PLUGIN_SECRET
 
 [vars]
-# Base URL of the CMS Worker — where the INTERIM submit write-back reaches the
-# F1 API ({CMS_URL}/__cms/*) to update the draft guest page. GET requests never
-# touch it. (Response storage is an open decision — see cms-to-rsvp.md §9.2 B.1.)
+# Base URL of the CMS Worker — used ONLY by the unsubscribe write-back
+# ({CMS_URL}/__cms/*, src/unsubscribe.ts). RSVP submits and registrations
+# never call the CMS: they insert rows into PUBLISHED_DB (src/submissions.ts).
 CMS_URL = "https://cms.eventuai.com"
 # Public origin serving the check-in QR links (cms-plugin-checkin's
 # /checkin/{listId}/{guestId}/{sig} routes) embedded by rsvp-qrcode blocks.

@@ -61,6 +61,8 @@ button{border:0;border-radius:.5rem;padding:.7rem 1.2rem;font:inherit;font-weigh
   {% endif %}
 
   <form method="post" action="{{ action | escape }}">
+    {%- comment -%} Honeypot: hidden from real visitors; a filled value marks the submit as a bot. {%- endcomment -%}
+    <input type="text" name="website" value="" style="position:absolute;left:-9999px;height:0;overflow:hidden" tabindex="-1" autocomplete="off" aria-hidden="true">
     {% if hasEdm %}
       {% for block in blocks %}
         {% case block.type %}

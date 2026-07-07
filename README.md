@@ -17,9 +17,9 @@ cms-plugin-events ──publish──▶ cms-published (D1) ──read──▶ 
 | Route | Description |
 |-------|-------------|
 | `GET /:lang?/rsvp/:eventId/:listId/:guestId/:sig` | The RSVP form (`?edm=` picks the EDM whose `rsvp-*` blocks define it) |
-| `POST` same path | Submit (interim: F1 draft-guest update as the events plugin) |
+| `POST` same path | Submit — stored as an `rsvp_response` row in `PUBLISHED_DB` (see below) |
 | `GET /:lang?/rsvp/thank-you` | Post-submit page |
-| `GET/POST /unsubscribe/:listId/:guestId/:sig` | EDM unsubscribe — confirm page, then sets the guest's `not_send` flag over F1 |
+| `GET/POST /unsubscribe/:listId/:guestId/:sig` | EDM unsubscribe — confirm page, then sets the guest's `not_send` flag over the Plugin API |
 | `GET /healthz` | Liveness + deploy version |
 
 `:lang` is one of `mis / en / zh-hant / zh-hans` (legacy Eventuai parity); the
@@ -32,17 +32,22 @@ and a signed check-in QR resolved by `cms-plugin-checkin`.
 
 - **Published data only on GET** — event/list/guest/EDM come from `PUBLISHED_DB`
   (`live_pages`, parameterized SELECTs in `src/published.ts`); unpublished
-  content is simply invisible. No draft/F1 reads on the public path.
+  content is simply invisible. No draft/Plugin API reads on the public path.
 - **No cookies or sessions** — guest identity comes solely from the HMAC-signed
   link, verified with `EVENTS_PLUGIN_SECRET` (a copy of `cms-plugin-events`'
   secret, same pattern as `cms-plugin-checkin`).
 - Strict security headers on every response; editor-authored rich text passes
   through the same `safeHtml` sanitiser the EDM pipeline uses; everything else
   is Liquid-escaped.
-- **Interim submit storage:** the POST updates the draft guest page through the
-  CMS F1 API (status, plus-guest count, response log), authenticated as the
-  events plugin. Full answer storage, self-registration, and the confirmation
-  email are an open decision — `cms-to-rsvp.md` §9.2 B.1.
+- **Submit storage (decided 2026-07-07):** responses and self-registrations are
+  INSERT-only rows in `PUBLISHED_DB` (`rsvp_response` / `rsvp_registration`,
+  negative ids, full answers — `src/submissions.ts`). This Worker never
+  updates/deletes published rows and never calls the CMS on the submit path;
+  worker-cms ingests the rows into its draft DB on a cron and the events plugin
+  applies them to guest pages from there. Because the CMS republish only ever
+  upserts rows by its own uuids, it can never overwrite a stored submission
+  (ownership contract: worker-cms `src/publish/README.md`). A hidden honeypot
+  field silently drops bot submits. The confirmation email is still open.
 
 ## Configuration
 
@@ -50,9 +55,9 @@ and a signed check-in QR resolved by `cms-plugin-checkin`.
 wrangler secret put EVENTS_PLUGIN_SECRET   # copy of cms-plugin-events' PLUGIN_SECRET
 ```
 
-`CMS_URL` (interim F1 write) and optional `CHECKIN_BASE_URL` (origin of the
-check-in QR links) are vars in `wrangler.toml`. `PUBLISHED_DB.database_id` must
-match the real `cms-published` database. Point `cms-plugin-events`'
+`CMS_URL` (unsubscribe write-back only) and optional `CHECKIN_BASE_URL` (origin
+of the check-in QR links) are vars in `wrangler.toml`. `PUBLISHED_DB.database_id`
+must match the real `cms-published` database. Point `cms-plugin-events`'
 `PUBLIC_BASE_URL` at this Worker's public origin so emailed links land here.
 
 Guests, lists, events and EDMs must be **published** for their form to render.
