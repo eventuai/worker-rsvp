@@ -566,7 +566,8 @@ describe('public RSVP form (EDM-driven, published data)', () => {
       env(publishedDb(seed({ guestLect: responded }))),
     );
     expect(redirected.status).toBe(303);
-    expect(redirected.headers.get('location')).toContain('/zh-hant/rsvp/thank-you?status=confirmed');
+    expect(redirected.headers.get('location')).toContain('/zh-hant/rsvp/7/8/9/');
+    expect(redirected.headers.get('location')).toContain('thank-you=confirmed');
 
     const refillable = await site.fetch(
       request(await signedPath()),
@@ -592,7 +593,8 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     }), env(db));
 
     expect(response.status).toBe(303);
-    expect(response.headers.get('location')).toContain('/rsvp/thank-you?status=confirmed');
+    expect(response.headers.get('location')).toContain('/rsvp/7/8/9/');
+    expect(response.headers.get('location')).toContain('thank-you=confirmed');
     expect(db.inserts.length).toBe(1);
 
     const row = db.inserts[0];
@@ -629,7 +631,8 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     // The response row alone (guest lect untouched) blocks the form…
     const again = await site.fetch(request(path), env(db));
     expect(again.status).toBe(303);
-    expect(again.headers.get('location')).toContain('/rsvp/thank-you?status=declined');
+    expect(again.headers.get('location')).toContain('/rsvp/7/8/9/');
+    expect(again.headers.get('location')).toContain('thank-you=declined');
 
     // …and a repeat submit without allow_refill stores nothing new.
     const resubmit = await submit();
@@ -650,6 +653,29 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(response.status).toBe(303); // bots still see the thank-you redirect
     expect(response.headers.get('location')).toContain('/rsvp/thank-you');
     expect(db.inserts.length).toBe(0);
+  });
+
+  it('renders a signed QR pass on the guest-specific confirmation page', async () => {
+    noCmsFetch();
+    const db = publishedDb(seed());
+    const path = await signedPath();
+    const submit = await site.fetch(request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ status: 'confirmed' }),
+    }), env(db));
+
+    const location = new URL(submit.headers.get('location')!);
+    expect(location.pathname).toContain('/rsvp/7/8/9/');
+    expect(location.searchParams.get('thank-you')).toBe('confirmed');
+
+    const confirmation = await site.fetch(request(`${location.pathname}${location.search}`), env(db));
+    const html = await confirmation.text();
+    expect(confirmation.status).toBe(200);
+    expect(html).toContain('Thank you for your RSVP');
+    expect(html).toContain('Your check-in pass');
+    expect(html).toContain('<svg');
+    expect(html).toContain('https://checkin.test/checkin/8/9/');
   });
 
   it('stores a public slug-form submit as an rsvp_registration row, never calling the CMS', async () => {

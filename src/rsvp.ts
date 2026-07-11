@@ -103,18 +103,26 @@ export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Prom
   const preferred = attr(guest.lect, 'prefer_language').toLowerCase();
   const language = urlLanguage || (RSVP_LANGUAGES.includes(preferred) ? preferred : '') || DEFAULT_LANGUAGE;
   const languagePrefix = urlLanguage ? `/${urlLanguage}` : '';
+  const edm = await resolveEdm(env.PUBLISHED_DB, url, list, eventId);
+
+  // A guest-specific confirmation stays on the signed RSVP URL so the QR
+  // cannot be guessed from the generic /rsvp/thank-you route. The stored
+  // response decides the displayed status; a forged query parameter alone
+  // cannot create a confirmation screen.
+  const responded = await respondedStatus(env.PUBLISHED_DB, guest);
+  if (url.searchParams.has('thank-you') && responded) {
+    return guestThankYou(env, guest, listId, edm, language, responded);
+  }
 
   if (request.method === 'POST') return submitRsvp(request, env, url, guest, eventId, listId, language, languagePrefix);
 
   // Already responded → straight to thank-you, unless the list allows refills.
   // Response rows are the source of truth (the published guest row only picks
   // up a response after ingest + republish); the guest lect is the fallback.
-  const responded = await respondedStatus(env.PUBLISHED_DB, guest);
   if (responded && !allowRefill(guest)) {
-    return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status: responded });
+    return guestThankYouRedirect(url, responded);
   }
 
-  const edm = await resolveEdm(env.PUBLISHED_DB, url, list, eventId);
   return rsvpForm(env, url, { event, list, guest, edm, eventId, listId, language });
 }
 
@@ -591,7 +599,7 @@ async function submitRsvp(
 
   const responded = await respondedStatus(env.PUBLISHED_DB!, guest);
   if (responded && !allowRefill(guest)) {
-    return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status: responded });
+    return guestThankYouRedirect(url, responded);
   }
 
   // Plus guests: the explicit count field (fallback form), else the number of
@@ -614,7 +622,7 @@ async function submitRsvp(
     language,
     answers: collectAnswers(form),
   });
-  return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status });
+  return guestThankYouRedirect(url, status);
 }
 
 /**
@@ -722,6 +730,52 @@ function previewGuest(): CmsPage {
 async function thankYou(views: Fetcher, status: string): Promise<Response> {
   const html = await renderLiquid(views, '/templates/public-thank-you.liquid', { declined: status === 'declined' });
   return htmlResponse(html);
+}
+
+/** Renders the legacy-style post-RSVP confirmation with this guest's QR pass. */
+async function guestThankYou(
+  env: RsvpEnv,
+  guest: CmsPage,
+  listId: number,
+  edm: CmsPage | null,
+  language: string,
+  status: string,
+): Promise<Response> {
+  const declined = status === 'declined';
+  const token = `${listId}.${guest.id}`;
+  const signature = env.EVENTS_PLUGIN_SECRET ? await signPayload(env.EVENTS_PLUGIN_SECRET, token) : '';
+  const code = signature ? `${token}.${signature}` : '';
+  const base = (env.CHECKIN_BASE_URL ?? '').replace(/\/+$/, '');
+  const checkinUrl = base && signature ? `${base}/checkin/${listId}/${guest.id}/${signature}` : '';
+  const payload = checkinUrl || code;
+  const lect = edm?.lect ?? {};
+  const title = declined
+    ? localized(lect, 'decline_heading', language) || 'Thank you'
+    : localized(lect, 'thankyou_heading', language) || 'Thank you for your RSVP';
+  const bodyHtml = safeHtml(
+    declined
+      ? localized(lect, 'decline_body', language) || 'We have recorded that you cannot attend.'
+      : localized(lect, 'thankyou_body', language) || 'Your RSVP has been recorded. We look forward to seeing you.',
+  );
+  const picture = assetUrl(env.CMS_URL, attr(lect, 'thankyou_picture'));
+  const html = await renderLiquid(env.VIEWS, '/templates/public-thank-you.liquid', {
+    declined,
+    title,
+    bodyHtml,
+    picture,
+    showQr: !declined && Boolean(payload),
+    qrSvg: payload ? qrSvg(payload, { size: 220 }) : '',
+    checkinUrl,
+    code,
+  });
+  return htmlResponse(html);
+}
+
+/** Redirects to the same signed URL, retaining event/list/guest identity and EDM selection. */
+function guestThankYouRedirect(url: URL, status: string): Response {
+  const target = new URL(url);
+  target.searchParams.set('thank-you', status);
+  return new Response(null, { status: 303, headers: { Location: target.toString() } });
 }
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
