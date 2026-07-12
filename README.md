@@ -34,8 +34,10 @@ and a signed check-in QR resolved by `cms-plugin-checkin`.
   (`live_pages`, parameterized SELECTs in `src/published.ts`); unpublished
   content is simply invisible. No draft/Plugin API reads on the public path.
 - **No cookies or sessions** — guest identity comes solely from the HMAC-signed
-  link, verified with `EVENTS_PLUGIN_SECRET` (a copy of `cms-plugin-events`'
-  secret, same pattern as `cms-plugin-checkin`).
+  link, verified with `EVENTS_SIGN_KEY` (a copy of `cms-plugin-events`'
+  public-token signKey, same pattern as `cms-plugin-checkin`). The pairwise
+  CMS↔plugin secret (`EVENTS_PLUGIN_SECRET`) is held only for the unsubscribe
+  write-back and never verifies public links.
 - Strict security headers on every response; editor-authored rich text passes
   through the same `safeHtml` sanitiser the EDM pipeline uses; everything else
   is Liquid-escaped.
@@ -52,7 +54,8 @@ and a signed check-in QR resolved by `cms-plugin-checkin`.
 ## Configuration
 
 ```
-wrangler secret put EVENTS_PLUGIN_SECRET   # copy of cms-plugin-events' PLUGIN_SECRET
+wrangler secret put EVENTS_SIGN_KEY        # cms-plugin-events' public-token signKey (tenant record `signKey`)
+wrangler secret put EVENTS_PLUGIN_SECRET   # pairwise CMS↔plugin secret — unsubscribe write-back only
 ```
 
 `CMS_URL` (unsubscribe write-back only) and optional `CHECKIN_BASE_URL` (origin

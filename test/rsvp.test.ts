@@ -16,6 +16,7 @@ import worker from '../src/index';
 
 interface Env {
   CMS_URL?: string;
+  EVENTS_SIGN_KEY?: string;
   EVENTS_PLUGIN_SECRET?: string;
   CHECKIN_BASE_URL?: string;
   PUBLISHED_DB?: D1Database;
@@ -125,12 +126,16 @@ function publishedDb(pages: SeedPage[]): FakePublishedDb {
   } as unknown as FakePublishedDb;
 }
 
+// Distinct values on purpose: signing/verifying public links must use the
+// signKey, the unsubscribe write-back must use the pairwise plugin secret.
+const SIGN_KEY = 'events-sign-key';
 const SECRET = 'events-secret';
 
 function env(db: D1Database, overrides: Partial<Env> = {}): Env {
   return {
     VIEWS: views(),
     CMS_URL: 'https://cms.test',
+    EVENTS_SIGN_KEY: SIGN_KEY,
     EVENTS_PLUGIN_SECRET: SECRET,
     CHECKIN_BASE_URL: 'https://checkin.test',
     PUBLISHED_DB: db,
@@ -277,7 +282,7 @@ afterEach(() => {
 });
 
 async function signedPath(prefix = ''): Promise<string> {
-  return `${prefix}/rsvp/7/8/9/${await signPayload(SECRET, 'rsvp:7:8:9')}`;
+  return `${prefix}/rsvp/7/8/9/${await signPayload(SIGN_KEY, 'rsvp:7:8:9')}`;
 }
 
 function noCmsFetch(): void {
@@ -407,6 +412,9 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).toContain('name="meal-1-food"');
     // Form posts back to the same signed URL including the edm selector
     expect(html).toContain('?edm=30"');
+    // The EDM already provides the event and language context.
+    expect(html).not.toContain('<p class="muted">Launch Night · VIP</p>');
+    expect(html).not.toContain('<nav class="langs">');
   });
 
   it('renders a slug-based public registration form without touching the CMS', async () => {
@@ -745,7 +753,7 @@ describe('public RSVP form (EDM-driven, published data)', () => {
 
 describe('EDM unsubscribe', () => {
   async function unsubPath(): Promise<string> {
-    return `/unsubscribe/8/9/${await signPayload(SECRET, 'unsub:8:9')}`;
+    return `/unsubscribe/8/9/${await signPayload(SIGN_KEY, 'unsub:8:9')}`;
   }
 
   it('shows a confirm page for a valid signed link (published guest only)', async () => {
@@ -768,10 +776,12 @@ describe('EDM unsubscribe', () => {
 
   it('sets not_send over the Plugin API on confirm', async () => {
     let updateBody: Record<string, unknown> | undefined;
+    let presentedSecret: string | null | undefined;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
       if (url.pathname === '/__cms/pages/9' && init?.method === 'PUT') {
         updateBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        presentedSecret = new Headers(init.headers).get('x-plugin-secret');
         return Response.json({ page: { id: 9 } });
       }
       return new Response('not found', { status: 404 });
@@ -783,6 +793,8 @@ describe('EDM unsubscribe', () => {
     expect(response.status).toBe(200);
     expect(html).toContain("You're unsubscribed");
     expect(updateBody).toMatchObject({ lect: { not_send: '1' } });
+    // The write-back authenticates with the pairwise secret, never the signKey.
+    expect(presentedSecret).toBe(SECRET);
   });
 
   it('skips the write when the guest already opted out', async () => {

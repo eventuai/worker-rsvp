@@ -9,8 +9,10 @@
 // (`/:language/rsvp/...`, mis/en/zh-hant/zh-hans).
 //
 // Links are minted and HMAC-signed by cms-plugin-events (its PUBLIC_BASE_URL
-// points at this Worker); EVENTS_PLUGIN_SECRET here is a copy of that plugin's
-// secret, used to verify them. The EDM that defines the form is picked from the
+// points at this Worker); EVENTS_SIGN_KEY here is a copy of that plugin's
+// public-token signKey (the tenant record's `signKey` — NOT the pairwise
+// CMS↔plugin secret), used to verify them. The EDM that defines the form is
+// picked from the
 // link's `?edm=` parameter or, failing that, the guest list's `edm` pointer.
 // Without a valid EDM the plain status/plus-guests fallback form renders
 // instead, so pre-EDM links keep working.
@@ -38,7 +40,12 @@ import { renderLiquid } from './templates/liquid';
 import { applyTemplateTokens, defaultGuestTokens, guestTokens, safeHtml } from './tokens';
 
 export interface RsvpEnv extends PublishedEnv {
-  /** Copy of cms-plugin-events' PLUGIN_SECRET — verifies its signed RSVP/unsubscribe links. */
+  /** Copy of cms-plugin-events' public-token signKey (tenant `signKey`, or its
+   *  SIGN_KEY/PLUGIN_SECRET fallback in single-tenant installs) — verifies the
+   *  signed RSVP/unsubscribe links and mints check-in QR signatures. */
+  EVENTS_SIGN_KEY?: string;
+  /** Pairwise CMS↔events-plugin secret — used ONLY by the unsubscribe
+   *  write-back (src/unsubscribe.ts) to authenticate against the Plugin API. */
   EVENTS_PLUGIN_SECRET?: string;
   /** Base URL of the CMS Worker — used only by the unsubscribe write-back (src/unsubscribe.ts). */
   CMS_URL?: string;
@@ -86,9 +93,9 @@ export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Prom
   const listId = pageId(path[2]);
   const guestId = pageId(path[3]);
   const signature = path[4] ?? '';
-  if (!eventId || !listId || !guestId || !signature || !env.EVENTS_PLUGIN_SECRET) return new Response('not found', { status: 404 });
+  if (!eventId || !listId || !guestId || !signature || !env.EVENTS_SIGN_KEY) return new Response('not found', { status: 404 });
   const payload = `rsvp:${eventId}:${listId}:${guestId}`;
-  if (!(await verifyPayload(env.EVENTS_PLUGIN_SECRET, payload, signature))) return new Response('not found', { status: 404 });
+  if (!(await verifyPayload(env.EVENTS_SIGN_KEY, payload, signature))) return new Response('not found', { status: 404 });
 
   // Published data only — no draft/Plugin API reads on the public GET path.
   if (!env.PUBLISHED_DB) return new Response('server misconfigured', { status: 500 });
@@ -162,6 +169,7 @@ async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<R
   const personalize = (value: string): string => (value ? applyTemplateTokens(value, tokens) : value);
 
   const action = url.pathname + (url.searchParams.get('edm') ? `?edm=${encodeURIComponent(url.searchParams.get('edm')!)}` : '');
+  const openedFromEdm = !!url.searchParams.get('edm');
   const edmLect = edm?.lect ?? {};
   const formBlocks = edm ? await formBlockVMs(env, edm, event, guest, listId, language, personalize) : [];
   const meals = formBlocks.filter((block) => block.type === 'rsvp-meal-preferences');
@@ -184,8 +192,8 @@ async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<R
     blocks: formBlocks,
     meals,
     hasMeals: meals.length > 0,
-    showEventLabel: true,
-    showLanguageSelector: true,
+    showEventLabel: !openedFromEdm,
+    showLanguageSelector: !openedFromEdm,
     languages: RSVP_LANGUAGES
       .filter((code) => code !== 'mis')
       .map((code) => ({
@@ -491,7 +499,7 @@ async function formBlockVMs(
         // Same signed check-in payload the events plugin's admin guest-QR view
         // mints, resolved by cms-plugin-checkin's /checkin/… routes.
         const token = `${listId}.${guest.id}`;
-        const sig = env.EVENTS_PLUGIN_SECRET ? await signPayload(env.EVENTS_PLUGIN_SECRET, token) : '';
+        const sig = env.EVENTS_SIGN_KEY ? await signPayload(env.EVENTS_SIGN_KEY, token) : '';
         const base = (env.CHECKIN_BASE_URL ?? '').replace(/\/+$/, '');
         const qrPayload = base && sig ? `${base}/checkin/${listId}/${guest.id}/${sig}` : `${token}.${sig}`;
         const size = Math.max(120, Number.parseInt(attr(block, 'size'), 10) || 200);
@@ -743,7 +751,7 @@ async function guestThankYou(
 ): Promise<Response> {
   const declined = status === 'declined';
   const token = `${listId}.${guest.id}`;
-  const signature = env.EVENTS_PLUGIN_SECRET ? await signPayload(env.EVENTS_PLUGIN_SECRET, token) : '';
+  const signature = env.EVENTS_SIGN_KEY ? await signPayload(env.EVENTS_SIGN_KEY, token) : '';
   const code = signature ? `${token}.${signature}` : '';
   const base = (env.CHECKIN_BASE_URL ?? '').replace(/\/+$/, '');
   const checkinUrl = base && signature ? `${base}/checkin/${listId}/${guest.id}/${signature}` : '';

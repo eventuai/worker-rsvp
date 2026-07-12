@@ -2,11 +2,12 @@
 // EDM unsubscribe — /unsubscribe/:listId/:guestId/:sig
 //
 // The link is minted per recipient by cms-plugin-events (signature over
-// `unsub:listId:guestId` with its PLUGIN_SECRET, verified here with the
-// EVENTS_PLUGIN_SECRET copy). GET shows a confirm page; POST sets the guest's
-// `not_send` flag over the Plugin API (the events plugin's send flows already skip
-// not_send guests). The guest is read from the published DB — same visibility
-// rule as the RSVP form.
+// `unsub:listId:guestId` with its public-token signKey, verified here with the
+// EVENTS_SIGN_KEY copy). GET shows a confirm page; POST sets the guest's
+// `not_send` flag over the Plugin API — that write-back authenticates with the
+// pairwise EVENTS_PLUGIN_SECRET (the CMS-generated plugin secret), the one
+// place this Worker still needs it. The guest is read from the published DB —
+// same visibility rule as the RSVP form.
 // ============================================================
 
 import { CmsClient, attr, type CmsPage } from './cms';
@@ -24,8 +25,8 @@ export async function handleUnsubscribe(request: Request, env: RsvpEnv, url: URL
   const listId = pageId(path[1]);
   const guestId = pageId(path[2]);
   const signature = path[3] ?? '';
-  if (!listId || !guestId || !signature || !env.EVENTS_PLUGIN_SECRET) return new Response('not found', { status: 404 });
-  if (!(await verifyPayload(env.EVENTS_PLUGIN_SECRET, `unsub:${listId}:${guestId}`, signature))) {
+  if (!listId || !guestId || !signature || !env.EVENTS_SIGN_KEY) return new Response('not found', { status: 404 });
+  if (!(await verifyPayload(env.EVENTS_SIGN_KEY, `unsub:${listId}:${guestId}`, signature))) {
     return new Response('not found', { status: 404 });
   }
 
@@ -38,6 +39,7 @@ export async function handleUnsubscribe(request: Request, env: RsvpEnv, url: URL
   const alreadyOff = truthy(attr(guest.lect, 'not_send'));
 
   if (request.method === 'POST' && !alreadyOff) {
+    if (!env.EVENTS_PLUGIN_SECRET) return new Response('server misconfigured', { status: 500 });
     const cms = new CmsClient({
       cmsUrl: env.CMS_URL,
       pluginSecret: env.EVENTS_PLUGIN_SECRET,
