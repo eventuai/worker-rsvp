@@ -251,6 +251,26 @@ function pageIdOnlyEdmSeed(): SeedPage[] {
   return pages;
 }
 
+function eventCustomInputSeed(): SeedPage[] {
+  const pages = seed();
+  const event = pages.find((page) => page.id === 7);
+  if (event) {
+    event.lect = {
+      ...(event.lect ?? {}),
+      _blocks: [
+        {
+          _type: 'rsvp-custom',
+          title: { en: 'Event questions' },
+          custom_input: [
+            { label: { en: 'Event access needs' }, type: 'textarea', required: 'no' },
+          ],
+        },
+      ],
+    };
+  }
+  return pages;
+}
+
 function defaultPublicFormSeed(): SeedPage[] {
   const pages = seed();
   const edm = pages.find((page) => page.id === 30);
@@ -351,6 +371,18 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     // EDM-configured accept button
     expect(html).toContain('Count me in');
     expect(html).toContain('src="/media/pictures/invite.jpg"');
+  });
+
+  it('renders shared rsvp-custom inputs defined on the event before EDM blocks', async () => {
+    noCmsFetch();
+
+    const response = await site.fetch(request(await signedPath()), env(publishedDb(eventCustomInputSeed())));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Event questions');
+    expect(html).toContain('name="rsvp-custom-event-access-needs"');
+    expect(html.indexOf('Event questions')).toBeLessThan(html.indexOf('A few questions'));
   });
 
   it('applies security headers to every response', async () => {

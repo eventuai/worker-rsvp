@@ -3,9 +3,10 @@
 //
 // Reads ONLY published content: the event / mail_list / guest / edm pages come
 // from the CMS's published D1 (`live_pages`, see src/published.ts) — unpublished
-// content is simply not visible here. The form itself is built from the EDM's
-// `rsvp-*` content blocks (meal preferences, plus-one, travel/hotel, pickup,
-// custom inputs, …), localized per the legacy Eventuai multilingual routes
+// content is simply not visible here. The form itself is built from the Event's
+// shared RSVP blocks followed by the EDM's `rsvp-*` content blocks (meal
+// preferences, plus-one, travel/hotel, pickup, custom inputs, …), localized per
+// the legacy Eventuai multilingual routes
 // (`/:language/rsvp/...`, mis/en/zh-hant/zh-hans).
 //
 // Links are minted and HMAC-signed by cms-plugin-events (its PUBLIC_BASE_URL
@@ -339,9 +340,10 @@ function stripLanguagePrefix(pathname: string): string {
 }
 
 /**
- * Projects the EDM's content blocks into the flat shapes the form template
- * renders. Rich-text fields are sanitised through safeHtml; everything else is
- * escaped in the templates.
+ * Projects the Event's shared RSVP blocks and the EDM's content blocks into
+ * the flat shapes the form template renders. Event blocks come first; EDM
+ * blocks then add invitation-specific content. Rich-text fields are sanitised
+ * through safeHtml; everything else is escaped in the templates.
  */
 async function formBlockVMs(
   env: RsvpEnv,
@@ -355,9 +357,24 @@ async function formBlockVMs(
 ): Promise<Array<Record<string, unknown>>> {
   const vms: Array<Record<string, unknown>> = [];
   let hasPublicRegistrationForm = false;
-  for (const [index, block] of blocks(edm.lect).entries()) {
+  const eventRsvpTypes = new Set([
+    'rsvp-meal-preferences',
+    'rsvp-travel-hotel',
+    'rsvp-plus-one',
+    'rsvp-custom',
+  ]);
+  const sourceBlocks = [
+    ...blocks(event.lect)
+      .map((block, index) => ({ block, index, source: 'event' }))
+      .filter(({ block }) => eventRsvpTypes.has(attr(block, '_type'))),
+    ...blocks(edm.lect).map((block, index) => ({ block, index, source: 'edm' })),
+  ];
+
+  for (const { block, index, source } of sourceBlocks) {
     const type = attr(block, '_type');
-    const key = attr(block, '_id') || String(index);
+    const key = source === 'event'
+      ? `event-${attr(block, '_id') || String(index)}`
+      : attr(block, '_id') || String(index);
     const title = personalize(localized(block, 'title', language));
     const bodyHtml = personalize(safeHtml(localized(block, 'body', language)));
 

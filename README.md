@@ -1,7 +1,7 @@
 # worker-rsvp
 
 The RSVP public website backed by 0xCMS — a standalone Cloudflare Worker (own
-domain) that renders guest-facing, **EDM-driven multilingual RSVP forms** from
+domain) that renders guest-facing, **Event- and EDM-driven multilingual RSVP forms** from
 the CMS's **published** database. The counterpart of
 [`worker-web`](../worker-web) for the events side: `cms-plugin-events` authors
 and publishes the content and mints the signed links; this Worker serves them.
@@ -16,7 +16,7 @@ cms-plugin-events ──publish──▶ cms-published (D1) ──read──▶ 
 
 | Route | Description |
 |-------|-------------|
-| `GET /:lang?/rsvp/:eventId/:listId/:guestId/:sig` | The RSVP form (`?edm=` picks the EDM whose `rsvp-*` blocks define it) |
+| `GET /:lang?/rsvp/:eventId/:listId/:guestId/:sig` | The RSVP form (`?edm=` picks the EDM; shared Event RSVP blocks render before its blocks) |
 | `POST` same path | Submit — stored as an `rsvp_response` row in `PUBLISHED_DB` (see below) |
 | `GET /:lang?/rsvp/thank-you` | Post-submit page |
 | `GET/POST /unsubscribe/:listId/:guestId/:sig` | EDM unsubscribe — confirm page, then sets the guest's `not_send` flag over the Plugin API |
