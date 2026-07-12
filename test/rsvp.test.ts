@@ -579,7 +579,7 @@ describe('public RSVP form (EDM-driven, published data)', () => {
 
     const refillable = await site.fetch(
       request(await signedPath()),
-      env(publishedDb(seed({ guestLect: { ...responded, allow_refill: '1' } }))),
+      env(publishedDb(seed({ guestLect: { ...responded, allow_refill: 'yes' } }))),
     );
     expect(refillable.status).toBe(200);
   });

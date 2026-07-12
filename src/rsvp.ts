@@ -123,7 +123,7 @@ export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Prom
 
   if (request.method === 'POST') return submitRsvp(request, env, url, guest, eventId, listId, language, languagePrefix);
 
-  // Already responded → straight to thank-you, unless the list allows refills.
+  // Already responded → straight to thank-you, unless the guest allows refills.
   // Response rows are the source of truth (the published guest row only picks
   // up a response after ingest + republish); the guest lect is the fallback.
   if (responded && !allowRefill(guest)) {
