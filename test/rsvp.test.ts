@@ -507,6 +507,8 @@ describe('public RSVP form (EDM-driven, published data)', () => {
 
     expect(response.status).toBe(200);
     expect(html).toContain('Preview of RSVP form: Invite');
+    expect(html).toContain('href="/rsvp/launch-night/30"');
+    expect(html).toContain('Open registration form ↗');
     expect(html).toContain('Dear Guest');
     expect(html).toContain('name="meal-1-food"');
     expect(html).toContain('action="#"');

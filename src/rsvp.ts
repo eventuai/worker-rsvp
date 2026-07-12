@@ -267,6 +267,7 @@ async function previewRsvpForm(
     hasMeals: meals.length > 0,
     preview: true,
     previewName: edm.name,
+    registrationHref: url.pathname.replace(/\/preview\/?$/, ''),
     showEventLabel: false,
     showLanguageSelector: false,
   });
