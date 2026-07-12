@@ -118,7 +118,7 @@ export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Prom
   // cannot create a confirmation screen.
   const responded = await respondedStatus(env.PUBLISHED_DB, guest);
   if (url.searchParams.has('thank-you') && responded) {
-    return guestThankYou(env, guest, listId, edm, language, responded);
+    return guestThankYou(env, edm, language, responded);
   }
 
   if (request.method === 'POST') return submitRsvp(request, env, url, guest, eventId, listId, language, languagePrefix);
@@ -740,22 +740,14 @@ async function thankYou(views: Fetcher, status: string): Promise<Response> {
   return htmlResponse(html);
 }
 
-/** Renders the legacy-style post-RSVP confirmation with this guest's QR pass. */
+/** Renders the post-RSVP confirmation. Check-in passes are sent separately. */
 async function guestThankYou(
   env: RsvpEnv,
-  guest: CmsPage,
-  listId: number,
   edm: CmsPage | null,
   language: string,
   status: string,
 ): Promise<Response> {
   const declined = status === 'declined';
-  const token = `${listId}.${guest.id}`;
-  const signature = env.EVENTS_SIGN_KEY ? await signPayload(env.EVENTS_SIGN_KEY, token) : '';
-  const code = signature ? `${token}.${signature}` : '';
-  const base = (env.CHECKIN_BASE_URL ?? '').replace(/\/+$/, '');
-  const checkinUrl = base && signature ? `${base}/checkin/${listId}/${guest.id}/${signature}` : '';
-  const payload = checkinUrl || code;
   const lect = edm?.lect ?? {};
   const title = declined
     ? localized(lect, 'decline_heading', language) || 'Thank you'
@@ -771,10 +763,6 @@ async function guestThankYou(
     title,
     bodyHtml,
     picture,
-    showQr: !declined && Boolean(payload),
-    qrSvg: payload ? qrSvg(payload, { size: 220 }) : '',
-    checkinUrl,
-    code,
   });
   return htmlResponse(html);
 }

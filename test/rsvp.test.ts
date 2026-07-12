@@ -663,7 +663,7 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(db.inserts.length).toBe(0);
   });
 
-  it('renders a signed QR pass on the guest-specific confirmation page', async () => {
+  it('renders the guest-specific confirmation without a check-in pass', async () => {
     noCmsFetch();
     const db = publishedDb(seed());
     const path = await signedPath();
@@ -681,9 +681,9 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     const html = await confirmation.text();
     expect(confirmation.status).toBe(200);
     expect(html).toContain('Thank you for your RSVP');
-    expect(html).toContain('Your check-in pass');
-    expect(html).toContain('<svg');
-    expect(html).toContain('https://checkin.test/checkin/8/9/');
+    expect(html).not.toContain('Your check-in pass');
+    expect(html).not.toContain('<svg');
+    expect(html).not.toContain('https://checkin.test/checkin/8/9/');
   });
 
   it('stores a public slug-form submit as an rsvp_registration row, never calling the CMS', async () => {
