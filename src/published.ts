@@ -6,7 +6,7 @@
 // only ever issues parameterized SELECTs; the schema is owned and migrated by
 // worker-cms. The binding's only writes live in src/submissions.ts —
 // insert-only rsvp_response / rsvp_registration rows with negative ids, per
-// the ownership contract in worker-cms src/publish/README.md. Draft pages
+// the generic live-only submission contract in worker-cms src/publish/README.md. Draft pages
 // (and the Plugin API) are never touched on the public GET path: a page that
 // is not published is simply not visible.
 // ============================================================

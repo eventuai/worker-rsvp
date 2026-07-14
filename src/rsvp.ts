@@ -22,7 +22,7 @@
 // self-registrations are stored as INSERT-only rows in the published D1
 // (rsvp_response / rsvp_registration — see src/submissions.ts for the
 // ownership contract that keeps CMS republishes from ever overwriting them).
-// worker-cms ingests the rows into its draft DB on a cron and fires create
+// worker-cms ingests the rows into its draft DB on a cron and fires submission
 // hooks; cms-plugin-events applies responses to guest pages from there. This
 // Worker no longer writes to the CMS on the submit path at all.
 // ============================================================

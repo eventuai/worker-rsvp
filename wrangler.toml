@@ -19,8 +19,8 @@ binding = "CF_VERSION_METADATA"
 # The ONLY writes are insert-only rsvp_response / rsvp_registration rows with
 # negative ids (src/submissions.ts) — never UPDATE/DELETE, never rows the CMS
 # minted — so a CMS republish can never overwrite a submission and vice versa
-# (contract: worker-cms src/publish/README.md; worker-cms ingests the rows into
-# its draft DB on a cron). The schema is OWNED by worker-cms
+# (contract: worker-cms src/publish/README.md; worker-cms recognizes each
+# live-only uuid as a submission and mirrors it into draft). The schema is OWNED by worker-cms
 # (cms/migrations/published) — deliberately no `migrations_dir` here so this
 # Worker can never re-migrate the shared database.
 [[d1_databases]]

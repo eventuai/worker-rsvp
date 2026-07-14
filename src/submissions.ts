@@ -2,8 +2,8 @@
 // Submission writes — the ONLY writes this Worker makes to the
 // published D1 (PUBLISHED_DB, otherwise read-only; see published.ts).
 //
-// RSVP responses and public self-registrations are stored as insert-only
-// rows in `live_pages` with reserved page types the CMS never mints:
+// RSVP responses and public self-registrations are stored as insert-only rows
+// in `live_pages` with RSVP-specific page types:
 //
 //   rsvp_response      — one row per submit; page_id = the guest's id
 //   rsvp_registration  — one row per signup;  page_id = the event's id
@@ -14,8 +14,8 @@
 //     and a response can never corrupt published content.
 //   - ids are NEGATIVE (CMS page ids are positive, minted from the same
 //     timestamp formula — the sign makes a collision impossible).
-//   - uuids come from the table default; worker-cms ingests rows into its
-//     draft DB keyed by that uuid and fires plugin hooks from there.
+//   - uuids come from the table default; worker-cms treats any live-only uuid
+//     as a submission, mirrors it into draft, and fires `submission` hooks.
 // ============================================================
 
 import type { CmsPage } from './cms';

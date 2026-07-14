@@ -45,8 +45,8 @@ and a signed check-in QR resolved by `cms-plugin-checkin`.
   INSERT-only rows in `PUBLISHED_DB` (`rsvp_response` / `rsvp_registration`,
   negative ids, full answers — `src/submissions.ts`). This Worker never
   updates/deletes published rows and never calls the CMS on the submit path;
-  worker-cms ingests the rows into its draft DB on a cron and the events plugin
-  applies them to guest pages from there. Because the CMS republish only ever
+  worker-cms recognizes their live-only UUIDs as submissions, mirrors them into
+  draft, and fires the events plugin's `submission` hook. Because CMS republish only ever
   upserts rows by its own uuids, it can never overwrite a stored submission
   (ownership contract: worker-cms `src/publish/README.md`). A hidden honeypot
   field silently drops bot submits. The confirmation email is still open.
