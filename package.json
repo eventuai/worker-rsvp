@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Public RSVP website backed by 0xCMS — renders EDM-driven RSVP forms from the published database.",
   "scripts": {
-    "dev": "wrangler dev --local --persist-to ../cms/.wrangler/state",
+    "dev": "wrangler dev --local --persist-to ../cms/.wrangler/state --port 8080",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
