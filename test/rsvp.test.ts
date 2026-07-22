@@ -196,6 +196,7 @@ function seed(overrides: { guestLect?: Record<string, unknown>; listLect?: Recor
         _pointers: { event: '7' },
         subject: { en: 'You are invited', 'zh-hant': '誠邀您出席' },
         heading: { en: 'Dear {{name}}', 'zh-hant': '親愛的 {{name}}' },
+        featured_image: '/media/pictures/invite-hero.jpg',
         body: { en: '<p>Join us at Launch Night.</p>' },
         rsvp_form_button: { en: 'Count me in' },
         _blocks: [
@@ -542,10 +543,55 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).toContain('href="/rsvp/launch-night/30"');
     expect(html).toContain('Open registration form ↗');
     expect(html).toContain('Dear Guest');
+    expect(html).toContain('<img class="featured-image" src="/media/pictures/invite-hero.jpg" alt="">');
+    expect(html.indexOf('Dear Guest')).toBeLessThan(html.indexOf('invite-hero.jpg'));
+    expect(html.indexOf('invite-hero.jpg')).toBeLessThan(html.indexOf('Join us at Launch Night.'));
     expect(html).toContain('name="meal-1-food"');
     expect(html).toContain('action="#"');
     expect(html).not.toContain('Scan at the door');
     expect(html).not.toContain('<nav class="langs">');
+    expect(html).toContain('body{margin:0;background:#fff;');
+    expect(html).toContain('.card{max-width:40rem;margin:3rem auto;background:#fff;padding:2rem}');
+    expect(html).not.toContain('box-shadow:');
+    expect(html).toContain('--edm-font-size:14px');
+    expect(html).toContain('--edm-headline-font-size:24px');
+    expect(html).toContain('--edm-line-height:1.5');
+    expect(html).toContain('--edm-text-color:#555555');
+    expect(html).toContain('--edm-button-color:#333333');
+    expect(html).toContain('--edm-button-text-color:#FFFFFF');
+    expect(html).toContain('h1{margin-top:0;font-size:var(--edm-headline-font-size,1.75rem);font-weight:400}');
+    expect(html).toContain('button{border:0;border-radius:3px;padding:10px 25px;');
+    expect(html).toContain('.yes{background:var(--edm-button-color,#333333);color:var(--edm-button-text-color,#FFFFFF)}');
+  });
+
+  it('matches the EDM preview style settings', async () => {
+    noCmsFetch();
+
+    const pages = seed();
+    const edm = pages.find((page) => page.id === 30);
+    if (edm) {
+      edm.lect = {
+        ...(edm.lect ?? {}),
+        text_color: '#123456',
+        font_size: '17',
+        font_family: 'Georgia, serif',
+        headline_font_size: '31',
+        line_height: '1.7',
+        button_color: '#123abc',
+        button_text_color: '#fedcba',
+      };
+    }
+    const response = await site.fetch(request('/rsvp/launch-night/30/preview'), env(publishedDb(pages)));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('--edm-font-family:Georgia, serif');
+    expect(html).toContain('--edm-font-size:17px');
+    expect(html).toContain('--edm-headline-font-size:31px');
+    expect(html).toContain('--edm-line-height:1.7');
+    expect(html).toContain('--edm-text-color:#123456');
+    expect(html).toContain('--edm-button-color:#123abc');
+    expect(html).toContain('--edm-button-text-color:#fedcba');
   });
 
   it('renders the legacy EDM preview route when event and EDM refs are ids or slugs', async () => {

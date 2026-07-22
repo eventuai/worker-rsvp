@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% if subject != blank %}{{ subject | escape }}{% else %}RSVP — {{ eventName | escape }}{% endif %}</title>
 <style>
-body{margin:0;background:#f3f4f6;font-family:system-ui,sans-serif;font-size:16px;color:#111827;line-height:1.5}
-.card{max-width:40rem;margin:3rem auto;background:#fff;padding:2rem;border-radius:1rem;box-shadow:0 1px 3px #0002}
-h1{margin-top:0;font-size:1.75rem}
+body{margin:0;background:#fff;font-family:var(--edm-font-family,system-ui,sans-serif);font-size:var(--edm-font-size,16px);color:var(--edm-text-color,#111827);line-height:var(--edm-line-height,1.5)}
+.card{max-width:40rem;margin:3rem auto;background:#fff;padding:2rem}
+h1{margin-top:0;font-size:var(--edm-headline-font-size,1.75rem);font-weight:400}
+.featured-image{display:block;max-width:100%;height:auto;margin:0 0 1rem}
 .muted{color:#6b7280;margin-top:0}
 .langs{font-size:.85rem;margin-bottom:1rem}
 .langs a{color:#6b7280;text-decoration:none;margin-right:.75rem}
@@ -36,12 +37,12 @@ table.info td{padding:.15rem .75rem .15rem 0;vertical-align:top}
 .qr svg{border:1px solid #e5e7eb;border-radius:.5rem}
 .required-note{color:#6b7280;font-size:.85rem;margin-top:1rem}
 .actions{display:flex;gap:.75rem;margin-top:1.5rem}
-button{border:0;border-radius:.5rem;padding:.7rem 1.2rem;font:inherit;font-weight:700;cursor:pointer}
-.yes{background:#4f46e5;color:#fff}
+button{border:0;border-radius:3px;padding:10px 25px;font:inherit;font-size:13px;font-weight:400;line-height:1.2;cursor:pointer}
+.yes{background:var(--edm-button-color,#333333);color:var(--edm-button-text-color,#FFFFFF)}
 .no{background:none;color:#6b7280;text-decoration:underline}
 </style>
 </head>
-<body>
+<body{% if hasEdm %} style="--edm-font-family:{{ edmFontFamily | escape }};--edm-font-size:{{ edmFontSize | escape }};--edm-text-color:{{ edmTextColor | escape }};--edm-line-height:{{ edmLineHeight | escape }};--edm-headline-font-size:{{ edmHeadlineFontSize | escape }};--edm-button-color:{{ edmButtonColor | escape }};--edm-button-text-color:{{ edmButtonTextColor | escape }}"{% endif %}>
 {% if preview %}<div class="preview">Preview of RSVP form: {{ previewName | escape }} <a href="{{ registrationHref | escape }}">Open registration form ↗</a></div>{% endif %}
 <main class="card">
   {% if showEventLabel %}
@@ -55,6 +56,7 @@ button{border:0;border-radius:.5rem;padding:.7rem 1.2rem;font:inherit;font-weigh
 
   {% if hasEdm %}
     {% if heading != blank %}<h1>{{ heading | escape }}</h1>{% endif %}
+    {% if featuredImage != blank %}<img class="featured-image" src="{{ featuredImage | escape }}" alt="">{% endif %}
     {% if bodyHtml != blank %}<div class="body">{{ bodyHtml }}</div>{% endif %}
   {% else %}
     <h1>RSVP</h1>

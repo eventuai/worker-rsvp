@@ -59,6 +59,15 @@ export const RSVP_LANGUAGES = ['mis', 'en', 'zh-hant', 'zh-hans'];
 
 const RESPONSES = new Set(['confirmed', 'declined']);
 const DEFAULT_LANGUAGE = 'en';
+const EDM_TYPOGRAPHY_DEFAULTS = {
+  textColor: '#555555',
+  fontSize: '14px',
+  fontFamily: "Helvetica, Arial, 'Microsoft JhengHei', 'PingFang TC', sans-serif",
+  headlineFontSize: '24px',
+  lineHeight: '1.5',
+  buttonColor: '#333333',
+  buttonTextColor: '#FFFFFF',
+} as const;
 
 export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Promise<Response | null> {
   const path = url.pathname.split('/').filter(Boolean);
@@ -186,6 +195,7 @@ async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<R
     plusGuests: attr(guest.lect, 'plus_guests') || '0',
     subject: personalize(localized(edmLect, 'subject', language)),
     heading: personalize(localized(edmLect, 'heading', language)),
+    featuredImage: assetUrl(env.CMS_URL, attr(edmLect, 'featured_image')),
     bodyHtml: personalize(safeHtml(localized(edmLect, 'body', language))),
     acceptLabel: localized(edmLect, 'rsvp_form_button', language)
       || localized(edmLect, 'rsvp_button', language)
@@ -195,6 +205,7 @@ async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<R
     hasMeals: meals.length > 0,
     showEventLabel: !openedFromEdm,
     showLanguageSelector: !openedFromEdm,
+    ...(edm ? edmTypography(edmLect) : {}),
     languages: RSVP_LANGUAGES
       .filter((code) => code !== 'mis')
       .map((code) => ({
@@ -259,6 +270,7 @@ async function previewRsvpForm(
     plusGuests: '0',
     subject: personalize(localized(edmLect, 'subject', language)),
     heading: personalize(localized(edmLect, 'heading', language)),
+    featuredImage: assetUrl(env.CMS_URL, attr(edmLect, 'featured_image')),
     bodyHtml: personalize(safeHtml(localized(edmLect, 'body', language))),
     acceptLabel: localized(edmLect, 'rsvp_form_button', language)
       || localized(edmLect, 'rsvp_button', language)
@@ -271,6 +283,7 @@ async function previewRsvpForm(
     registrationHref: url.pathname.replace(/\/preview\/?$/, ''),
     showEventLabel: false,
     showLanguageSelector: false,
+    ...edmTypography(edmLect),
   });
 }
 
@@ -319,6 +332,7 @@ async function publicRegistrationForm(
     plusGuests: '0',
     subject: personalize(localized(edmLect, 'subject', language)),
     heading: personalize(localized(edmLect, 'heading', language)),
+    featuredImage: assetUrl(env.CMS_URL, attr(edmLect, 'featured_image')),
     bodyHtml: personalize(safeHtml(localized(edmLect, 'body', language))),
     acceptLabel: localized(edmLect, 'rsvp_form_button', language)
       || localized(edmLect, 'rsvp_button', language)
@@ -330,7 +344,45 @@ async function publicRegistrationForm(
     hideDecline: true,
     showEventLabel: false,
     showLanguageSelector: false,
+    ...edmTypography(edmLect),
   });
+}
+
+/** Match the style settings used by cms-plugin-events' MJML EDM preview. */
+function edmTypography(lect: Record<string, unknown>): Record<string, string> {
+  return {
+    edmTextColor: cssColor(attr(lect, 'text_color'), EDM_TYPOGRAPHY_DEFAULTS.textColor),
+    edmFontSize: cssPixels(attr(lect, 'font_size'), EDM_TYPOGRAPHY_DEFAULTS.fontSize),
+    edmFontFamily: cssFontFamily(attr(lect, 'font_family'), EDM_TYPOGRAPHY_DEFAULTS.fontFamily),
+    edmHeadlineFontSize: cssPixels(attr(lect, 'headline_font_size'), EDM_TYPOGRAPHY_DEFAULTS.headlineFontSize),
+    edmLineHeight: cssLineHeight(attr(lect, 'line_height'), EDM_TYPOGRAPHY_DEFAULTS.lineHeight),
+    edmButtonColor: cssColor(attr(lect, 'button_color'), EDM_TYPOGRAPHY_DEFAULTS.buttonColor),
+    edmButtonTextColor: cssColor(attr(lect, 'button_text_color'), EDM_TYPOGRAPHY_DEFAULTS.buttonTextColor),
+  };
+}
+
+function cssPixels(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  return /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(trimmed) && Number.parseFloat(trimmed) > 0
+    ? `${trimmed}px`
+    : fallback;
+}
+
+function cssLineHeight(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  return /^(?:\d+(?:\.\d+)?|\.\d+)(?:px|%|em|rem)?$/.test(trimmed) && Number.parseFloat(trimmed) > 0
+    ? trimmed
+    : fallback;
+}
+
+function cssColor(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  return /^#[0-9a-f]{3,8}$/i.test(trimmed) ? trimmed : fallback;
+}
+
+function cssFontFamily(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  return trimmed && !/[;{}<>\\\r\n]/.test(trimmed) ? trimmed : fallback;
 }
 
 function stripLanguagePrefix(pathname: string): string {
