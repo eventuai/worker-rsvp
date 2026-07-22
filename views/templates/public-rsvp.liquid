@@ -76,8 +76,8 @@ button{border:0;border-radius:3px;padding:10px 25px;font:inherit;font-size:13px;
           {% when 'spacer' %}{% render 'public/spacer', block: block %}
           {% when 'rsvp-location' %}{% render 'public/rsvp-location', block: block %}
           {% when 'rsvp-date-time' %}{% render 'public/rsvp-date-time', block: block %}
-          {% when 'rsvp-meal-preferences' %}{% render 'public/rsvp-meal-preferences', block: block, prefix: '', showTitle: true %}
-          {% when 'rsvp-plus-one' %}{% render 'public/rsvp-plus-one', block: block, meals: meals %}
+          {% when 'rsvp-meal-preferences' %}{% render 'public/rsvp-meal-preferences', block: block, prefix: '', showTitle: true, answers: answers %}
+          {% when 'rsvp-plus-one' %}{% render 'public/rsvp-plus-one', block: block, meals: meals, answers: answers %}
           {% when 'rsvp-custom' %}{% render 'public/rsvp-custom', block: block %}
           {% when 'rsvp-travel-hotel' %}{% render 'public/rsvp-travel-hotel', block: block %}
           {% when 'rsvp-pickup' %}{% render 'public/rsvp-pickup', block: block %}
@@ -94,7 +94,7 @@ button{border:0;border-radius:3px;padding:10px 25px;font:inherit;font-size:13px;
       <label>Additional guests</label>
       <input type="number" min="0" name="plus_guests" value="{{ plusGuests | escape }}">
       <label>Message (optional)</label>
-      <textarea name="message" rows="4" placeholder="Anything the event team should know?"></textarea>
+      <textarea name="message" rows="4" placeholder="Anything the event team should know?">{{ message | escape }}</textarea>
     {% endif %}
 
     <div class="actions">

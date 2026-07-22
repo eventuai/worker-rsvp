@@ -45,6 +45,8 @@ interface SeedPage {
   name?: string;
   slug?: string;
   page_id?: number | null;
+  created_at?: string;
+  updated_at?: string;
   lect?: Record<string, unknown>;
 }
 
@@ -104,11 +106,17 @@ function publishedDb(pages: SeedPage[]): FakePublishedDb {
           }
           if (sql.includes('page_type = ? AND page_id = ?')) {
             // latestResponse: newest submission row for a guest.
-            const matched = inserts.filter((row) => row.page_type === values[0] && row.page_id === values[1]);
+            const published = rows
+              .filter((row) => row.page_type === values[0] && row.page_id === values[1])
+              .map((row) => ({ lect: row.lect }));
+            const inserted = inserts
+              .filter((row) => row.page_type === values[0] && row.page_id === values[1])
+              .map((row) => ({ lect: JSON.stringify(row.lect) }));
+            const matched = [...published, ...inserted];
             const newest = matched[matched.length - 1] ?? null;
             return {
-              async first() { return newest ? { lect: JSON.stringify(newest.lect) } : null; },
-              async all() { return { results: matched.map((row) => ({ lect: JSON.stringify(row.lect) })) }; },
+              async first() { return newest; },
+              async all() { return { results: matched }; },
             };
           }
           const matched = sql.includes('page_type = ? AND slug = ?')
@@ -374,16 +382,17 @@ describe('public RSVP form (EDM-driven, published data)', () => {
     expect(html).toContain('src="/media/pictures/invite.jpg"');
   });
 
-  it('renders shared rsvp-custom inputs defined on the event before EDM blocks', async () => {
+  it('does not render internal rsvp-custom inputs defined on the event', async () => {
     noCmsFetch();
 
     const response = await site.fetch(request(await signedPath()), env(publishedDb(eventCustomInputSeed())));
     const html = await response.text();
 
     expect(response.status).toBe(200);
-    expect(html).toContain('Event questions');
-    expect(html).toContain('name="rsvp-custom-event-access-needs"');
-    expect(html.indexOf('Event questions')).toBeLessThan(html.indexOf('A few questions'));
+    expect(html).not.toContain('Event questions');
+    expect(html).not.toContain('name="rsvp-custom-event-access-needs"');
+    // EDM-scoped RSVP questions remain public.
+    expect(html).toContain('name="rsvp-custom-dietary-notes"');
   });
 
   it('applies security headers to every response', async () => {
@@ -659,9 +668,122 @@ describe('public RSVP form (EDM-driven, published data)', () => {
 
     const refillable = await site.fetch(
       request(await signedPath()),
-      env(publishedDb(seed({ guestLect: { ...responded, allow_refill: 'yes' } }))),
+      env(publishedDb(seed({ guestLect: { ...responded, refill: [{ edm: 'latest' }] } }))),
     );
     expect(refillable.status).toBe(200);
+  });
+
+  it('scopes refill permission to the eDM it was granted for', async () => {
+    noCmsFetch();
+
+    const responded = {
+      plus_guests: '0',
+      response: [{ status: 'confirmed', date: '2026-06-01', message: '' }],
+      // Re-opened for eDM 50 only.
+      refill: [{ edm: '50' }],
+    };
+    const db = publishedDb(seed({ guestLect: responded }));
+    const path = await signedPath();
+
+    const granted = await site.fetch(request(`${path}?edm=50`), env(db));
+    expect(granted.status).toBe(200);
+
+    // Another eDM of the same event stays closed…
+    const otherEdm = await site.fetch(request(`${path}?edm=51`), env(db));
+    expect(otherEdm.status).toBe(303);
+    expect(otherEdm.headers.get('location')).toContain('thank-you=confirmed');
+
+    // …as does the eDM-less link.
+    const noEdm = await site.fetch(request(path), env(db));
+    expect(noEdm.status).toBe(303);
+  });
+
+  it('re-opens every eDM listed in refill, and only those', async () => {
+    noCmsFetch();
+
+    const db = publishedDb(seed({
+      guestLect: {
+        plus_guests: '0',
+        response: [{ status: 'confirmed', date: '2026-06-01', message: '' }],
+        refill: [{ edm: '50' }, { edm: '52' }],
+      },
+    }));
+    const path = await signedPath();
+
+    expect((await site.fetch(request(`${path}?edm=50`), env(db))).status).toBe(200);
+    expect((await site.fetch(request(`${path}?edm=52`), env(db))).status).toBe(200);
+    expect((await site.fetch(request(`${path}?edm=51`), env(db))).status).toBe(303);
+  });
+
+  it('prefills an admin-reopened form, then closes refill after resubmission', async () => {
+    noCmsFetch();
+    const pages = seed({ guestLect: { refill: [{ edm: 'latest' }], _updated_at: '2026-07-01T00:00:00.000Z' } });
+    const guest = pages.find((page) => page.id === 9)!;
+    // A background republish may touch the row after a response without
+    // representing an admin edit; the lect timestamp remains authoritative.
+    guest.updated_at = '2099-07-01 00:00:00';
+    pages.push({
+      id: -501,
+      page_type: 'rsvp_response',
+      page_id: 9,
+      lect: {
+        status: 'confirmed',
+        submitted_at: '2026-06-01T00:00:00.000Z',
+        answers: {
+          'rsvp-custom-dietary-notes': 'No dairy',
+          'rsvp-custom-shuttle-bus': 'no',
+          'meal-1-food': 'Vegetarian',
+          'rsvp-plus-one-1:name': 'Grace Hopper',
+          'rsvp-plus-one-1:organization': 'Navy',
+          'rsvp-plus-one-1:meal-1-food': 'Chicken',
+          'session-1': 'yes',
+        },
+      },
+    });
+    const db = publishedDb(pages);
+    const path = await signedPath();
+
+    const reopened = await site.fetch(request(path), env(db));
+    const html = await reopened.text();
+
+    expect(reopened.status).toBe(200);
+    expect(html).toContain('>No dairy</textarea>');
+    expect(html).toContain('<option value="no" selected>No thanks</option>');
+    expect(html).toMatch(/name="meal-1-food"\s+value="Vegetarian"\s+checked\s*>/);
+    expect(html).toContain('name="rsvp-plus-one-1:name" value="Grace Hopper"');
+    expect(html).toContain('name="rsvp-plus-one-1:organization" value="Navy"');
+    expect(html).toMatch(/name="rsvp-plus-one-1:meal-1-food"\s+value="Chicken"\s+checked\s*>/);
+    expect(html).toContain('name="session-1" value="yes" checked');
+
+    const resubmitted = await site.fetch(request(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ status: 'confirmed', 'rsvp-custom-dietary-notes': 'Updated' }),
+    }), env(db));
+    expect(resubmitted.status).toBe(303);
+
+    const afterSubmit = await site.fetch(request(path), env(db));
+    expect(afterSubmit.status).toBe(303);
+    expect(afterSubmit.headers.get('location')).toContain('thank-you=confirmed');
+  });
+
+  it('matches the EDM styling on a guest-specific thank-you page', async () => {
+    noCmsFetch();
+
+    const responded = { plus_guests: '0', response: [{ status: 'confirmed', date: '2026-06-01', message: '' }] };
+    const response = await site.fetch(
+      request(`${await signedPath()}?edm=30&thank-you=confirmed`),
+      env(publishedDb(seed({ guestLect: responded }))),
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('<body class="edm"');
+    expect(html).toContain('--edm-font-size:14px');
+    expect(html).toContain('--edm-headline-font-size:24px');
+    expect(html).toContain('--edm-text-color:#555555');
+    expect(html).toContain('body.edm .card{max-width:40rem;margin:3rem auto;border-radius:0;box-shadow:none}');
+    expect(html).toContain('body.edm h1{margin-top:0;font-size:var(--edm-headline-font-size);font-weight:400}');
   });
 
   it('stores the response as an rsvp_response row with full answers, never calling the CMS', async () => {

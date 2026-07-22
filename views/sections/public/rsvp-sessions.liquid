@@ -8,7 +8,7 @@
   {% if block.bodyHtml != blank %}<div class="body">{{ block.bodyHtml }}</div>{% endif %}
   {% for session in block.sessions %}
   <div class="choice">
-    <input type="checkbox" id="{{ session.field }}" name="{{ session.field }}" value="yes">
+    <input type="checkbox" id="{{ session.field }}" name="{{ session.field }}" value="yes"{% if session.checked %} checked{% endif %}>
     <label for="{{ session.field }}">{{ session.name | escape }}{% if session.start != blank %} — {{ session.start | escape }}{% endif %}{% if session.location != blank %} · {{ session.location | escape }}{% endif %}</label>
   </div>
   {% endfor %}

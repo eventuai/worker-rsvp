@@ -9,40 +9,40 @@
   <div class="grid-2">
     <div>
       <label for="rsvp-pickup-pickup_date">{{ block.pickupDateLabel | escape }}</label>
-      <input type="date" id="rsvp-pickup-pickup_date" name="rsvp-pickup-pickup_date">
+      <input type="date" id="rsvp-pickup-pickup_date" name="rsvp-pickup-pickup_date" value="{{ block.pickupDate | escape }}">
     </div>
     <div>
       <label for="rsvp-pickup-pickup_time">{{ block.pickupTimeLabel | escape }}</label>
-      <input type="time" id="rsvp-pickup-pickup_time" name="rsvp-pickup-pickup_time">
+      <input type="time" id="rsvp-pickup-pickup_time" name="rsvp-pickup-pickup_time" value="{{ block.pickupTime | escape }}">
     </div>
   </div>
   <label for="rsvp-pickup-pickup_location">{{ block.pickupLocationLabel | escape }}</label>
-  <input type="text" id="rsvp-pickup-pickup_location" name="rsvp-pickup-pickup_location" placeholder="Enter pickup address">
+  <input type="text" id="rsvp-pickup-pickup_location" name="rsvp-pickup-pickup_location" value="{{ block.pickupLocation | escape }}" placeholder="Enter pickup address">
 
   <div class="block-sub">Drop-off Details</div>
   <div class="grid-2">
     <div>
       <label for="rsvp-pickup-dropoff_date">{{ block.dropoffDateLabel | escape }}</label>
-      <input type="date" id="rsvp-pickup-dropoff_date" name="rsvp-pickup-dropoff_date">
+      <input type="date" id="rsvp-pickup-dropoff_date" name="rsvp-pickup-dropoff_date" value="{{ block.dropoffDate | escape }}">
     </div>
     <div>
       <label for="rsvp-pickup-dropoff_time">{{ block.dropoffTimeLabel | escape }}</label>
-      <input type="time" id="rsvp-pickup-dropoff_time" name="rsvp-pickup-dropoff_time">
+      <input type="time" id="rsvp-pickup-dropoff_time" name="rsvp-pickup-dropoff_time" value="{{ block.dropoffTime | escape }}">
     </div>
   </div>
   <label for="rsvp-pickup-dropoff_location">{{ block.dropoffLocationLabel | escape }}</label>
-  <input type="text" id="rsvp-pickup-dropoff_location" name="rsvp-pickup-dropoff_location" placeholder="Enter drop-off address">
+  <input type="text" id="rsvp-pickup-dropoff_location" name="rsvp-pickup-dropoff_location" value="{{ block.dropoffLocation | escape }}" placeholder="Enter drop-off address">
 
   {% if block.accommodationTitle != blank %}
   <div class="block-sub">{{ block.accommodationTitle | escape }}</div>
   <div class="grid-2">
     <div>
       <label for="rsvp-pickup-checkin_date">{{ block.checkinDateLabel | escape }}</label>
-      <input type="date" id="rsvp-pickup-checkin_date" name="rsvp-pickup-checkin_date">
+      <input type="date" id="rsvp-pickup-checkin_date" name="rsvp-pickup-checkin_date" value="{{ block.checkinDate | escape }}">
     </div>
     <div>
       <label for="rsvp-pickup-checkout_date">{{ block.checkoutDateLabel | escape }}</label>
-      <input type="date" id="rsvp-pickup-checkout_date" name="rsvp-pickup-checkout_date">
+      <input type="date" id="rsvp-pickup-checkout_date" name="rsvp-pickup-checkout_date" value="{{ block.checkoutDate | escape }}">
     </div>
   </div>
   {% endif %}

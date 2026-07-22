@@ -126,21 +126,23 @@ export async function handleRsvp(request: Request, env: RsvpEnv, url: URL): Prom
   // cannot be guessed from the generic /rsvp/thank-you route. The stored
   // response decides the displayed status; a forged query parameter alone
   // cannot create a confirmation screen.
-  const responded = await respondedStatus(env.PUBLISHED_DB, guest);
-  if (url.searchParams.has('thank-you') && responded) {
-    return guestThankYou(env, edm, language, responded);
+  const responseState = await guestResponseState(env.PUBLISHED_DB, guest);
+  if (url.searchParams.has('thank-you') && responseState.status) {
+    return guestThankYou(env, edm, language, responseState.status);
   }
 
-  if (request.method === 'POST') return submitRsvp(request, env, url, guest, eventId, listId, language, languagePrefix);
+  if (request.method === 'POST') {
+    return submitRsvp(request, env, url, guest, eventId, listId, language, languagePrefix, responseState);
+  }
 
   // Already responded → straight to thank-you, unless the guest allows refills.
   // Response rows are the source of truth (the published guest row only picks
   // up a response after ingest + republish); the guest lect is the fallback.
-  if (responded && !allowRefill(guest)) {
-    return guestThankYouRedirect(url, responded);
+  if (responseState.status && !refillAllowed(guest, responseState.latest, refillScope(url))) {
+    return guestThankYouRedirect(url, responseState.status);
   }
 
-  return rsvpForm(env, url, { event, list, guest, edm, eventId, listId, language });
+  return rsvpForm(env, url, { event, list, guest, edm, eventId, listId, language, latest: responseState.latest });
 }
 
 // ── EDM resolution ─────────────────────────────────────────────────────────────
@@ -169,10 +171,11 @@ interface FormContext {
   eventId: number;
   listId: number;
   language: string;
+  latest: Record<string, unknown> | null;
 }
 
 async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<Response> {
-  const { event, list, guest, edm, listId, language } = context;
+  const { event, list, guest, edm, listId, language, latest } = context;
 
   // Personalization tokens ({{name}}, {{salutation}}, …), legacy ControllerRSVP.parse.
   const tokens = guestTokens(guest);
@@ -181,7 +184,10 @@ async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<R
   const action = url.pathname + (url.searchParams.get('edm') ? `?edm=${encodeURIComponent(url.searchParams.get('edm')!)}` : '');
   const openedFromEdm = !!url.searchParams.get('edm');
   const edmLect = edm?.lect ?? {};
-  const formBlocks = edm ? await formBlockVMs(env, edm, event, guest, listId, language, personalize) : [];
+  const answers = submittedAnswers(latest);
+  const formBlocks = edm
+    ? await formBlockVMs(env, edm, event, guest, listId, language, personalize, { answers })
+    : [];
   const meals = formBlocks.filter((block) => block.type === 'rsvp-meal-preferences');
 
   const html = await renderLiquid(env.VIEWS, '/templates/public-rsvp.liquid', {
@@ -192,7 +198,9 @@ async function rsvpForm(env: RsvpEnv, url: URL, context: FormContext): Promise<R
     listName: list.name,
     guestName: personalize('{{prefer_name||name}}') || guest.name,
     status: attr(guest.lect, 'status'),
-    plusGuests: attr(guest.lect, 'plus_guests') || '0',
+    plusGuests: latest ? String(latest.plus_guests ?? '0') : attr(guest.lect, 'plus_guests') || '0',
+    message: latest ? String(latest.message ?? '') : '',
+    answers,
     subject: personalize(localized(edmLect, 'subject', language)),
     heading: personalize(localized(edmLect, 'heading', language)),
     featuredImage: assetUrl(env.CMS_URL, attr(edmLect, 'featured_image')),
@@ -405,15 +413,15 @@ async function formBlockVMs(
   listId: number,
   language: string,
   personalize: (value: string) => string,
-  options: { publicRegistration?: boolean; preview?: boolean } = {},
+  options: { publicRegistration?: boolean; preview?: boolean; answers?: Record<string, string> } = {},
 ): Promise<Array<Record<string, unknown>>> {
   const vms: Array<Record<string, unknown>> = [];
+  const answers = options.answers ?? {};
   let hasPublicRegistrationForm = false;
   const eventRsvpTypes = new Set([
     'rsvp-meal-preferences',
     'rsvp-travel-hotel',
     'rsvp-plus-one',
-    'rsvp-custom',
   ]);
   const sourceBlocks = [
     ...blocks(event.lect)
@@ -487,9 +495,10 @@ async function formBlockVMs(
         });
         break;
       case 'rsvp-meal-preferences':
+        const mealKey = `meal-${key}`;
         vms.push({
           type,
-          key: `meal-${key}`,
+          key: mealKey,
           title,
           bodyHtml,
           allowMessage: truthy(attr(block, 'allow_message')),
@@ -498,7 +507,9 @@ async function formBlockVMs(
           food: items(block, 'food').map((row) => ({
             name: localized(row, 'name', language),
             description: localized(row, 'description', language),
+            checked: answers[`${mealKey}-food`] === localized(row, 'name', language),
           })).filter((row) => row.name),
+          message: answers[`${mealKey}-message`] ?? '',
         });
         break;
       case 'rsvp-plus-one': {
@@ -507,7 +518,7 @@ async function formBlockVMs(
         break;
       }
       case 'rsvp-custom':
-        vms.push({ type, title, bodyHtml, inputs: customInputVMs(block, 'custom_input', 'rsvp-custom-', language) });
+        vms.push({ type, title, bodyHtml, inputs: customInputVMs(block, 'custom_input', 'rsvp-custom-', language, answers) });
         break;
       case 'rsvp-public-form':
         if (options.publicRegistration) {
@@ -523,7 +534,7 @@ async function formBlockVMs(
             emailLabel: localized(block, 'label_email', language) || 'Email',
             organizationLabel: localized(block, 'label_organization', language) || 'Company / Organization',
             jobTitleLabel: localized(block, 'label_job_title', language) || 'Position',
-            inputs: customInputVMs(block, 'custom_input', 'rsvp-public-', language),
+            inputs: customInputVMs(block, 'custom_input', 'rsvp-public-', language, answers),
           });
         }
         break;
@@ -532,8 +543,8 @@ async function formBlockVMs(
           type,
           title,
           bodyHtml,
-          flightInputs: customInputVMs(block, 'flight_custom_input', 'rsvp-travel-hotel-flight-', language),
-          hotelInputs: customInputVMs(block, 'hotel_custom_input', 'rsvp-travel-hotel-', language),
+          flightInputs: customInputVMs(block, 'flight_custom_input', 'rsvp-travel-hotel-flight-', language, answers),
+          hotelInputs: customInputVMs(block, 'hotel_custom_input', 'rsvp-travel-hotel-', language, answers),
         });
         break;
       case 'rsvp-pickup':
@@ -549,6 +560,14 @@ async function formBlockVMs(
           accommodationTitle: localized(block, 'accommodation_title', language),
           checkinDateLabel: localized(block, 'checkin_date_label', language) || 'Check-in Date',
           checkoutDateLabel: localized(block, 'checkout_date_label', language) || 'Check-out Date',
+          pickupDate: answers['rsvp-pickup-pickup_date'] ?? '',
+          pickupTime: answers['rsvp-pickup-pickup_time'] ?? '',
+          pickupLocation: answers['rsvp-pickup-pickup_location'] ?? '',
+          dropoffDate: answers['rsvp-pickup-dropoff_date'] ?? '',
+          dropoffTime: answers['rsvp-pickup-dropoff_time'] ?? '',
+          dropoffLocation: answers['rsvp-pickup-dropoff_location'] ?? '',
+          checkinDate: answers['rsvp-pickup-checkin_date'] ?? '',
+          checkoutDate: answers['rsvp-pickup-checkout_date'] ?? '',
         });
         break;
       case 'rsvp-sessions':
@@ -561,6 +580,7 @@ async function formBlockVMs(
             start: attr(session, 'start'),
             location: localized(session, 'location', language),
             field: `session-${sessionIndex}`,
+            checked: answers[`session-${sessionIndex}`] === 'yes',
           })).filter((session) => session.name),
         });
         break;
@@ -613,7 +633,9 @@ interface CustomInputVM {
   required: boolean;
   description: string;
   defaultValue: string;
-  options: Array<{ value: string; label: string }>;
+  value: string;
+  checked: boolean;
+  options: Array<{ value: string; label: string; selected: boolean }>;
 }
 
 /** Legacy field-name scheme: `<prefix><label-slug>` (lowercased, spaces → dashes). */
@@ -622,6 +644,7 @@ function customInputVMs(
   itemsKey: string,
   prefix: string,
   language: string,
+  answers: Record<string, string> = {},
 ): CustomInputVM[] {
   return items(block, itemsKey)
     .map((input) => {
@@ -629,17 +652,31 @@ function customInputVMs(
       const name = attr(input, 'name') || slug(label);
       const type = attr(input, 'type') || 'text';
       const defaultValue = attr(input, 'default_value') || localized(input, 'default_value', language);
+      const fieldName = `${prefix}${slug(name)}`;
+      const value = answers[fieldName] ?? '';
       return {
-        name: `${prefix}${slug(name)}`,
+        name: fieldName,
         label,
         type,
         required: truthy(attr(input, 'required')),
         description: localized(input, 'description', language),
         defaultValue,
-        options: type === 'select' || type === 'radio' ? parseOptions(defaultValue) : [],
+        value,
+        checked: Object.hasOwn(answers, fieldName),
+        options: type === 'select' || type === 'radio'
+          ? parseOptions(defaultValue).map((option) => ({ ...option, selected: option.value === value }))
+          : [],
       };
     })
     .filter((input) => input.label);
+}
+
+function submittedAnswers(response: Record<string, unknown> | null): Record<string, string> {
+  const value = response?.answers;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+  );
 }
 
 /** `value:label|value:label` → options (legacy select/radio encoding). */
@@ -668,6 +705,7 @@ async function submitRsvp(
   listId: number,
   language: string,
   languagePrefix: string,
+  responseState: GuestResponseState,
 ): Promise<Response> {
   const form = await request.formData();
   const status = String(form.get('status') ?? '').trim().toLowerCase();
@@ -675,9 +713,8 @@ async function submitRsvp(
   // Honeypot filled → a bot. Pretend success, store nothing.
   if (honeypotFilled(form)) return redirect(url, `${languagePrefix}/rsvp/thank-you`, { status });
 
-  const responded = await respondedStatus(env.PUBLISHED_DB!, guest);
-  if (responded && !allowRefill(guest)) {
-    return guestThankYouRedirect(url, responded);
+  if (responseState.status && !refillAllowed(guest, responseState.latest, refillScope(url))) {
+    return guestThankYouRedirect(url, responseState.status);
   }
 
   // Plus guests: the explicit count field (fallback form), else the number of
@@ -709,12 +746,19 @@ async function submitRsvp(
  * back to the response log in the published guest lect (pre-cutover data, or
  * a response that already made the round trip through ingest + republish).
  */
-async function respondedStatus(db: D1Database, guest: CmsPage): Promise<string | null> {
+interface GuestResponseState {
+  status: string | null;
+  latest: Record<string, unknown> | null;
+}
+
+async function guestResponseState(db: D1Database, guest: CmsPage): Promise<GuestResponseState> {
   const latest = await latestResponse(db, guest.id);
-  if (latest) return String(latest.status ?? 'confirmed');
+  if (latest) return { status: String(latest.status ?? 'confirmed'), latest };
   const responses = realResponses(guest);
-  if (responses.length) return String(responses[responses.length - 1].status ?? 'confirmed');
-  return null;
+  return {
+    status: responses.length ? String(responses[responses.length - 1].status ?? 'confirmed') : null,
+    latest: null,
+  };
 }
 
 /** Classic honeypot: a visually hidden "website" input real visitors never fill. */
@@ -833,6 +877,8 @@ async function guestThankYou(
     title,
     bodyHtml,
     picture,
+    hasEdm: !!edm,
+    ...(edm ? edmTypography(lect) : {}),
   });
   return htmlResponse(html);
 }
@@ -881,8 +927,46 @@ function realResponses(guest: CmsPage): Array<Record<string, unknown>> {
   );
 }
 
-function allowRefill(guest: CmsPage): boolean {
-  return truthy(attr(guest.lect, 'allow_refill'));
+/**
+ * Which eDM a refill permission applies to. Mirrors the id stored on the
+ * response row (`edm_id`), so `latest` covers a link that carried no `?edm=`.
+ */
+function refillScope(url: URL): string {
+  return String(pageId(url.searchParams.get('edm')) ?? '') || 'latest';
+}
+
+/**
+ * The guest's `refill` rows list the eDMs an admin re-opened — any number of
+ * them, but only those: a re-open never applies to every eDM the guest was
+ * sent. Each row is consumed by its own eDM's next response.
+ */
+function allowRefill(guest: CmsPage, scope: string): boolean {
+  return items(guest.lect, 'refill').some((entry) => String(entry.edm ?? '').trim() === scope);
+}
+
+/**
+ * Refill permission is single-use. An admin reopens the form by publishing the
+ * guest after the previous response; the next response is then newer than the
+ * guest and immediately closes it, without waiting for CMS ingestion.
+ */
+function refillAllowed(guest: CmsPage, latest: Record<string, unknown> | null, scope: string): boolean {
+  if (!allowRefill(guest, scope)) return false;
+  if (!latest) return true;
+
+  const submittedAt = parsedTimestamp(String(latest.submitted_at ?? ''));
+  // `_updated_at` tracks an actual guest edit. The live-page row timestamp can
+  // also move during an automated republish with unchanged refill settings.
+  const guestUpdatedAt = parsedTimestamp(attr(guest.lect, '_updated_at'))
+    ?? parsedTimestamp(guest.updated_at);
+  return submittedAt === null || guestUpdatedAt === null || guestUpdatedAt > submittedAt;
+}
+
+function parsedTimestamp(value: string): number | null {
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+    ? `${value.replace(' ', 'T')}Z`
+    : value;
+  const timestamp = Date.parse(normalized);
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function truthy(value: string): boolean {

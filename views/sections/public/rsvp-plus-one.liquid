@@ -9,14 +9,16 @@
   <div class="body">{% if block.bodyHtml != blank %}{{ block.bodyHtml }}{% else %}Will you be joining us with a guest? Please provide their name below.{% endif %}</div>
   {% for i in (1..block.maxGuests) %}
     {% capture guestPrefix %}rsvp-plus-one-{{ i }}:{% endcapture %}
+    {% capture guestNameField %}{{ guestPrefix }}name{% endcapture %}
+    {% capture guestOrganizationField %}{{ guestPrefix }}organization{% endcapture %}
     <div class="plus-guest">
       <span class="idx">{{ i }}.</span>
-      <input type="text" aria-label="Name" name="{{ guestPrefix }}name" placeholder="Name">
-      <input type="text" aria-label="Organization" name="{{ guestPrefix }}organization" placeholder="Organization">
+      <input type="text" aria-label="Name" name="{{ guestPrefix }}name" value="{{ answers[guestNameField] | escape }}" placeholder="Name">
+      <input type="text" aria-label="Organization" name="{{ guestPrefix }}organization" value="{{ answers[guestOrganizationField] | escape }}" placeholder="Organization">
     </div>
     {% for meal in meals %}
     <div class="nested">
-      {% render 'public/rsvp-meal-preferences', block: meal, prefix: guestPrefix, showTitle: false %}
+      {% render 'public/rsvp-meal-preferences', block: meal, prefix: guestPrefix, showTitle: false, answers: answers %}
     </div>
     {% endfor %}
   {% endfor %}

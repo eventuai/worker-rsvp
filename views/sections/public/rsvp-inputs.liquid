@@ -12,6 +12,7 @@
              id="{{ input.name | escape }}"
              name="{{ input.name | escape }}"
              value="{{ input.defaultValue | escape }}"
+             {% if input.checked %}checked{% endif %}
              {% if input.required %}required{% endif %}>
       <label for="{{ input.name | escape }}">{{ input.label | escape }}{% if input.required %} *{% endif %}</label>
     </div>
@@ -19,7 +20,7 @@
     <label for="{{ input.name | escape }}">{{ input.label | escape }}{% if input.required %} *{% endif %}</label>
     <select id="{{ input.name | escape }}" name="{{ input.name | escape }}" {% if input.required %}required{% endif %}>
       {% for option in input.options %}
-      <option value="{{ option.value | escape }}">{{ option.label | escape }}</option>
+      <option value="{{ option.value | escape }}"{% if option.selected %} selected{% endif %}>{{ option.label | escape }}</option>
       {% endfor %}
     </select>
     {% when 'radio' %}
@@ -30,6 +31,7 @@
              id="{{ input.name | escape }}-{{ forloop.index0 }}"
              name="{{ input.name | escape }}"
              value="{{ option.value | escape }}"
+             {% if option.selected %}checked{% endif %}
              {% if input.required %}required{% endif %}>
       <label for="{{ input.name | escape }}-{{ forloop.index0 }}">{{ option.label | escape }}</label>
     </div>
@@ -40,13 +42,14 @@
               name="{{ input.name | escape }}"
               rows="3"
               placeholder="{{ input.description | escape }}"
-              {% if input.required %}required{% endif %}></textarea>
+              {% if input.required %}required{% endif %}>{{ input.value | escape }}</textarea>
     {% when 'file' %}
     {% else %}
     <label for="{{ input.name | escape }}">{{ input.label | escape }}{% if input.required %} *{% endif %}</label>
     <input type="{{ input.type | default: 'text' | escape }}"
            id="{{ input.name | escape }}"
            name="{{ input.name | escape }}"
+           value="{{ input.value | escape }}"
            placeholder="{{ input.description | escape }}"
            {% if input.required %}required{% endif %}>
   {% endcase %}
